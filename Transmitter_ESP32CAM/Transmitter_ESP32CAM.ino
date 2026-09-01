@@ -103,13 +103,13 @@ void setup() {
   }
 
   // --- PROSES MENGAMBIL GAMBAR ---
-  Serial.println("Mengambil gambar (Flash DIMATIKAN sementara untuk tes Power/Arus)...");
-  // digitalWrite(FLASH_PIN, HIGH); // FLASH SEMENTARA DIMATIKAN UNTUK UJI COBA
-  delay(1000); // Jeda agar auto-exposure sensor menyesuaikan cahaya terang
+  Serial.println("Menghidupkan Flash LED dan mengambil gambar...");
+  digitalWrite(FLASH_PIN, HIGH); // NYALAKAN LAMPU FLASH
+  delay(1000); // Beri waktu 1 detik agar sensor kamera beradaptasi dengan terangnya cahaya
 
   camera_fb_t * fb = esp_camera_fb_get();
   
-  digitalWrite(FLASH_PIN, LOW); // Pastikan flash mati
+  digitalWrite(FLASH_PIN, LOW); // MATIKAN LAMPU FLASH segera setelah jepretan selesai
 
   if (!fb) {
     Serial.println("Gagal mengambil gambar");
