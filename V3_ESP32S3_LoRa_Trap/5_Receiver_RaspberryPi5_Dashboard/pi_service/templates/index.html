@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Dashboard Pemantauan Hama | Insect Trap IoT</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Font Awesome 6 Icons CDN -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  
+  <!-- Chart.js CDN -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#f0fdf4',
+              500: '#22c55e',
+              600: '#16a34a',
+              700: '#15803d',
+            }
+          }
+        }
+      }
+    }
+  </script>
+</head>
+<body class="bg-slate-950 text-slate-100 min-h-screen font-sans antialiased">
+
+  <!-- ================= NAVBAR ================= -->
+  <header class="bg-slate-900/80 backdrop-blur border-b border-slate-800 sticky top-0 z-30">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 text-xl shadow-lg shadow-emerald-950">
+          <i class="fa-solid fa-bug"></i>
+        </div>
+        <div>
+          <h1 class="text-base sm:text-lg font-bold text-white tracking-wide">PEMANTAUAN HAMA PERANGKAP FEROMON</h1>
+          <p class="text-xs text-slate-400">ESP32-S3-CAM + LoRa E220 &bull; Raspberry Pi 5</p>
+        </div>
+      </div>
+
+      <div class="flex items-center space-x-3">
+        <div class="hidden sm:flex items-center space-x-2 px-3 py-1.5 rounded-full bg-slate-800/80 border border-slate-700 text-xs">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="text-slate-300">Stasiun Aktif</span>
+        </div>
+        <a href="/export/csv" class="inline-flex items-center space-x-2 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-semibold shadow transition">
+          <i class="fa-solid fa-file-csv"></i>
+          <span>Unduh CSV</span>
+        </a>
+      </div>
+    </div>
+  </header>
+
+  <!-- ================= MAIN CONTENT ================= -->
+  <main class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 space-y-6">
+
+    <!-- KPI STATS CARDS -->
+    <section class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      
+      <!-- Card Suhu -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Suhu Lingkungan</p>
+          <div class="flex items-baseline space-x-1 mt-1">
+            <span id="txt-suhu" class="text-2xl sm:text-3xl font-extrabold text-white">--</span>
+            <span class="text-sm font-medium text-slate-400">°C</span>
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1">Sensor DHT22 Lapangan</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400 text-xl">
+          <i class="fa-solid fa-temperature-half"></i>
+        </div>
+      </div>
+
+      <!-- Card Kelembaban -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Kelembaban Udara</p>
+          <div class="flex items-baseline space-x-1 mt-1">
+            <span id="txt-kelembaban" class="text-2xl sm:text-3xl font-extrabold text-white">--</span>
+            <span class="text-sm font-medium text-slate-400">% RH</span>
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1">Kondisi Box Perangkap</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-cyan-500/10 border border-cyan-500/20 flex items-center justify-center text-cyan-400 text-xl">
+          <i class="fa-solid fa-droplet"></i>
+        </div>
+      </div>
+
+      <!-- Card Jumlah Hama -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Populasi Hama</p>
+          <div class="flex items-baseline space-x-2 mt-1">
+            <span id="txt-hama" class="text-2xl sm:text-3xl font-extrabold text-white">--</span>
+            <span id="badge-threat" class="px-2 py-0.5 text-[11px] font-bold rounded-full bg-slate-800 text-slate-300">--</span>
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1">Hasil AI Image Counting</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center text-rose-400 text-xl">
+          <i class="fa-solid fa-locust"></i>
+        </div>
+      </div>
+
+      <!-- Card Waktu RTC -->
+      <div class="bg-slate-900/90 border border-slate-800 rounded-2xl p-4 flex items-center justify-between shadow-sm">
+        <div>
+          <p class="text-xs font-medium text-slate-400 uppercase tracking-wider">Waktu Pemantauan</p>
+          <div class="mt-1">
+            <span id="txt-waktu" class="text-sm font-bold text-slate-200 block truncate">Menunggu...</span>
+          </div>
+          <p class="text-[11px] text-slate-500 mt-1">Sinkronisasi RTC DS3231</p>
+        </div>
+        <div class="w-12 h-12 rounded-xl bg-indigo-500/10 border border-indigo-500/20 flex items-center justify-center text-indigo-400 text-xl">
+          <i class="fa-solid fa-clock"></i>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- CENTERPIECE: PHOTO VIEWER & DETECTION -->
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      
+      <!-- FOTO PERANGKAP HAMA -->
+      <div class="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800 pb-3">
+          <div class="flex items-center space-x-2">
+            <i class="fa-solid fa-camera text-emerald-400"></i>
+            <h2 class="text-base font-bold text-white">Visualisasi Plat Perekat Hama</h2>
+          </div>
+          <!-- Toggle View Buttons -->
+          <div class="inline-flex rounded-lg bg-slate-800 p-1 border border-slate-700 text-xs font-semibold">
+            <button id="btn-view-annotated" onclick="switchImageView('annotated')" class="px-3 py-1 rounded-md bg-emerald-600 text-white transition shadow">
+              Deteksi AI (Box)
+            </button>
+            <button id="btn-view-raw" onclick="switchImageView('raw')" class="px-3 py-1 rounded-md text-slate-400 hover:text-white transition">
+              Foto Asli
+            </button>
+          </div>
+        </div>
+
+        <!-- Frame Gambar -->
+        <div class="relative w-full aspect-[4/3] bg-slate-950 rounded-xl overflow-hidden border border-slate-800 flex items-center justify-center group">
+          <img id="img-display" src="" alt="Foto Perangkap Hama" class="object-contain w-full h-full hidden">
+          <div id="img-placeholder" class="text-center p-6 text-slate-500">
+            <i class="fa-solid fa-image text-4xl mb-2 text-slate-600"></i>
+            <p class="text-sm">Belum ada foto yang diterima dari LoRa Transmitter.</p>
+            <p class="text-xs text-slate-600 mt-1">Transmitter akan mengirimkan foto otomatis sesuai jadwal.</p>
+          </div>
+          
+          <!-- Badge Info Gambar -->
+          <div id="img-meta-badge" class="absolute bottom-3 left-3 bg-slate-900/80 backdrop-blur px-3 py-1 rounded-lg border border-slate-700 text-xs text-slate-300 hidden">
+            <span id="txt-img-meta">Ukuran: -- KB</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- GRAFIK TREN POPULASI HAMA HARIAN -->
+      <div class="lg:col-span-5 bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-sm flex flex-col justify-between space-y-4">
+        <div class="border-b border-slate-800 pb-3 flex items-center justify-between">
+          <div class="flex items-center space-x-2">
+            <i class="fa-solid fa-chart-line text-rose-400"></i>
+            <h2 class="text-base font-bold text-white">Tren Populasi Serangga</h2>
+          </div>
+          <span class="text-xs text-slate-400">Per Jadwal Capture</span>
+        </div>
+
+        <div class="h-64 relative">
+          <canvas id="chart-hama"></canvas>
+        </div>
+
+        <div class="bg-slate-950/60 rounded-xl p-3 border border-slate-800/80 text-xs text-slate-400 flex items-center justify-between">
+          <span><strong class="text-slate-200">Ambang Batas:</strong> Hijau (&lt;10), Kuning (10-25), Merah (&gt;25)</span>
+          <i class="fa-solid fa-circle-info text-slate-500"></i>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- GRAFIK HISTORI SUHU & KELEMBABAN -->
+    <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center space-x-2">
+          <i class="fa-solid fa-chart-area text-cyan-400"></i>
+          <h2 class="text-base font-bold text-white">Fluktuasi Suhu & Kelembaban Lingkungan</h2>
+        </div>
+        <span class="text-xs text-slate-400">30 Catatan Terakhir</span>
+      </div>
+
+      <div class="h-64 relative">
+        <canvas id="chart-sensor"></canvas>
+      </div>
+    </section>
+
+    <!-- RIWAYAT TANGKAPAN GAMBAR (GALLERY) -->
+    <section class="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-sm space-y-4">
+      <div class="flex items-center justify-between border-b border-slate-800 pb-3">
+        <div class="flex items-center space-x-2">
+          <i class="fa-solid fa-images text-indigo-400"></i>
+          <h2 class="text-base font-bold text-white">Galeri Riwayat Perangkap</h2>
+        </div>
+        <span id="gallery-count" class="text-xs text-slate-400">0 Foto</span>
+      </div>
+
+      <div id="gallery-container" class="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
+        <!-- Thumbnail item akan di-generate via JavaScript -->
+        <p class="text-xs text-slate-500 col-span-full py-4 text-center">Memuat riwayat foto...</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- ================= JAVASCRIPT LOGIC ================= -->
+  <script>
+    let currentRawUrl = "";
+    let currentAnnotatedUrl = "";
+    let currentViewMode = "annotated";
+
+    // Chart.js Instances
+    let chartHama = null;
+    let chartSensor = null;
+
+    // Inisialisasi Grafik Chart.js
+    function initCharts() {
+      // 1. Grafik Hama
+      const ctxHama = document.getElementById('chart-hama').getContext('2d');
+      chartHama = new Chart(ctxHama, {
+        type: 'bar',
+        data: {
+          labels: [],
+          datasets: [{
+            label: 'Jumlah Serangga',
+            data: [],
+            backgroundColor: 'rgba(244, 63, 94, 0.7)',
+            borderColor: '#f43f5e',
+            borderWidth: 1.5,
+            borderRadius: 6
+          }]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { display: false } },
+            y: { ticks: { color: '#94a3b8' }, grid: { color: 'rgba(51, 65, 85, 0.4)' }, beginAtZero: true }
+          }
+        }
+      });
+
+      // 2. Grafik Sensor
+      const ctxSensor = document.getElementById('chart-sensor').getContext('2d');
+      chartSensor = new Chart(ctxSensor, {
+        type: 'line',
+        data: {
+          labels: [],
+          datasets: [
+            {
+              label: 'Suhu (°C)',
+              data: [],
+              borderColor: '#f59e0b',
+              backgroundColor: 'rgba(245, 158, 11, 0.1)',
+              borderWidth: 2,
+              fill: true,
+              tension: 0.3,
+              yAxisID: 'y'
+            },
+            {
+              label: 'Kelembaban (% RH)',
+              data: [],
+              borderColor: '#06b6d4',
+              backgroundColor: 'transparent',
+              borderWidth: 2,
+              tension: 0.3,
+              yAxisID: 'y1'
+            }
+          ]
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          interaction: { mode: 'index', intersect: false },
+          scales: {
+            x: { ticks: { color: '#94a3b8', font: { size: 10 } }, grid: { display: false } },
+            y: {
+              type: 'linear',
+              position: 'left',
+              title: { display: true, text: 'Suhu (°C)', color: '#f59e0b' },
+              ticks: { color: '#f59e0b' },
+              grid: { color: 'rgba(51, 65, 85, 0.4)' }
+            },
+            y1: {
+              type: 'linear',
+              position: 'right',
+              title: { display: true, text: 'Kelembaban (%)', color: '#06b6d4' },
+              ticks: { color: '#06b6d4' },
+              grid: { drawOnChartArea: false }
+            }
+          }
+        }
+      });
+    }
+
+    // Ganti Tampilan Foto Asli / Anotasi
+    function switchImageView(mode) {
+      currentViewMode = mode;
+      const img = document.getElementById('img-display');
+      const btnAnn = document.getElementById('btn-view-annotated');
+      const btnRaw = document.getElementById('btn-view-raw');
+
+      if (mode === 'annotated' && currentAnnotatedUrl) {
+        img.src = currentAnnotatedUrl;
+        btnAnn.className = "px-3 py-1 rounded-md bg-emerald-600 text-white transition shadow";
+        btnRaw.className = "px-3 py-1 rounded-md text-slate-400 hover:text-white transition";
+      } else if (mode === 'raw' && currentRawUrl) {
+        img.src = currentRawUrl;
+        btnRaw.className = "px-3 py-1 rounded-md bg-emerald-600 text-white transition shadow";
+        btnAnn.className = "px-3 py-1 rounded-md text-slate-400 hover:text-white transition";
+      }
+    }
+
+    // Ambil Data Terbaru dari REST API
+    async function fetchLatestData() {
+      try {
+        const res = await fetch('/api/latest');
+        const data = await res.json();
+
+        if (data.status === 'success') {
+          // Update Sensor
+          document.getElementById('txt-suhu').innerText = data.sensor.suhu ? data.sensor.suhu.toFixed(1) : '--';
+          document.getElementById('txt-kelembaban').innerText = data.sensor.kelembaban ? data.sensor.kelembaban.toFixed(1) : '--';
+          document.getElementById('txt-waktu').innerText = data.sensor.waktu_rtc || '--';
+
+          // Update Gambar
+          if (data.image.has_image) {
+            currentRawUrl = data.image.raw_url;
+            currentAnnotatedUrl = data.image.annotated_url;
+
+            const img = document.getElementById('img-display');
+            const placeholder = document.getElementById('img-placeholder');
+            const metaBadge = document.getElementById('img-meta-badge');
+
+            img.classList.remove('hidden');
+            placeholder.classList.add('hidden');
+            metaBadge.classList.remove('hidden');
+
+            document.getElementById('txt-img-meta').innerText = `${data.image.waktu_rtc} &bull; ${data.image.size_kb} KB`;
+
+            switchImageView(currentViewMode);
+
+            // Update Hama
+            document.getElementById('txt-hama').innerText = data.image.insect_count;
+            const badge = document.getElementById('badge-threat');
+            badge.innerText = data.image.threat_level;
+
+            if (data.image.threat_level === 'Aman') {
+              badge.className = "px-2 py-0.5 text-[11px] font-bold rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30";
+            } else if (data.image.threat_level === 'Waspada') {
+              badge.className = "px-2 py-0.5 text-[11px] font-bold rounded-full bg-amber-500/20 text-amber-400 border border-amber-500/30";
+            } else {
+              badge.className = "px-2 py-0.5 text-[11px] font-bold rounded-full bg-rose-500/20 text-rose-400 border border-rose-500/30 animate-pulse";
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Gagal mengambil data terbaru:", err);
+      }
+    }
+
+    // Ambil Data Riwayat untuk Grafik & Galeri
+    async function fetchHistoryData() {
+      try {
+        // 1. Riwayat Sensor
+        const resSensor = await fetch('/api/history');
+        const dataSensor = await resSensor.json();
+
+        if (chartSensor) {
+          chartSensor.data.labels = dataSensor.labels.map(l => l.substring(11, 16)); // Format jam:menit
+          chartSensor.data.datasets[0].data = dataSensor.suhu;
+          chartSensor.data.datasets[1].data = dataSensor.kelembaban;
+          chartSensor.update();
+        }
+
+        // 2. Riwayat Detections & Grafik Hama
+        const resDetections = await fetch('/api/detections');
+        const dataDetections = await resDetections.json();
+
+        if (chartHama && dataDetections.trend_labels) {
+          chartHama.data.labels = dataDetections.trend_labels.map(l => l.substring(5, 10)); // Format MM-DD
+          chartHama.data.datasets[0].data = dataDetections.trend_counts;
+          chartHama.update();
+        }
+
+        // 3. Render Galeri
+        const gallery = document.getElementById('gallery-container');
+        document.getElementById('gallery-count').innerText = `${dataDetections.detections.length} Foto`;
+
+        if (dataDetections.detections.length > 0) {
+          gallery.innerHTML = dataDetections.detections.map(item => `
+            <div class="bg-slate-950 rounded-xl overflow-hidden border border-slate-800 hover:border-emerald-500/50 transition group cursor-pointer" onclick="viewGalleryItem('${item.raw_url}', '${item.annotated_url}')">
+              <div class="relative aspect-[4/3] bg-slate-900 overflow-hidden">
+                <img src="${item.annotated_url || item.raw_url}" alt="Capture" class="w-full h-full object-cover group-hover:scale-105 transition duration-300">
+                <span class="absolute top-1.5 right-1.5 px-1.5 py-0.5 rounded bg-slate-900/80 text-[10px] font-bold text-white backdrop-blur">
+                  ${item.count} Hama
+                </span>
+              </div>
+              <div class="p-2 text-[11px] text-slate-400">
+                <p class="truncate font-medium text-slate-300">${item.timestamp}</p>
+                <p class="text-[10px] text-slate-500">${item.size_kb} KB</p>
+              </div>
+            </div>
+          `).join('');
+        }
+      } catch (err) {
+        console.error("Gagal mengambil histori:", err);
+      }
+    }
+
+    function viewGalleryItem(raw, ann) {
+      currentRawUrl = raw;
+      currentAnnotatedUrl = ann;
+      switchImageView('annotated');
+      window.scrollTo({ top: 120, behavior: 'smooth' });
+    }
+
+    // Polling berkala
+    window.addEventListener('DOMContentLoaded', () => {
+      initCharts();
+      fetchLatestData();
+      fetchHistoryData();
+
+      // Refresh setiap 5 detik
+      setInterval(fetchLatestData, 5000);
+      setInterval(fetchHistoryData, 15000);
+    });
+  </script>
+</body>
+</html>

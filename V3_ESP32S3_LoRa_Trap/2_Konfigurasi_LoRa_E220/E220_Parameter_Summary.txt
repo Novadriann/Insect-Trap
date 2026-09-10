@@ -1,0 +1,23 @@
+=============================================================
+RINGKASAN KONFIGURASI LORA EBYTE E220-900T22D (E220_V1.1 GUI)
+=============================================================
+Baud Rate    : 115200
+Parity       : 8N1
+Air Rate     : 19.2k (atau 62.5k)
+Packet Size  : 200 bytes (atau 240 bytes)
+Tran Mode    : Transparent mode
+Wor Cycle    : 2000 ms
+Power        : 22 dBm
+WorkMode     : Normal
+Channel RSSI : Enable
+LBT          : Disable
+Packet RSSI  : Enable
+Address      : 00 00
+Channel      : 65 (915.125 MHz - Frekuensi ISM Indonesia)
+Key          : 00 00
+
+PIN SETELAH KONFIGURASI SELESAI:
+- M0 -> GND
+- M1 -> GND
+(Beroperasi di Mode 0 / Normal Transparent Mode)
+=============================================================
