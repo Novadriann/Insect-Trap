@@ -37,15 +37,15 @@ V3_ESP32S3_LoRa_Trap/
 ## ⚡ 1. Ringkasan Alokasi Pin ESP32-S3 CAM (Transmitter)
 
 Pinout telah dirancang khusus agar bebas dari konflik kamera OV3660 bawaan dan chip internal Octal PSRAM:
-- **DHT22 Data**: `GPIO 1` (ADC1_CH0)
+- **DHT22 Data**: `GPIO 1` (ADC1_CH0, diberi pull-up 4.7kΩ–10kΩ ke 3.3V)
 - **RTC DS3231 I2C**: `GPIO 2 (SDA)` dan `GPIO 3 (SCL)`
 - **LoRa Ebyte E220**:
   - `LoRa TXD` -> `GPIO 41 (ESP32-S3 RX)`
   - `LoRa RXD` -> `GPIO 42 (ESP32-S3 TX)`
   - `M0` & `M1` -> `GND` (Mode 0: Normal Transparent)
-- **Flash LED Trigger**: `GPIO 47` (ke Gate Driver MOSFET)
-- **Kipas Mini DC 5V**: Terhubung langsung ke output `+5V & GND HLK` (Menyala terus-menerus 24/7 untuk sirkulasi suhu)
-- **Catu Daya HLK 5V 2A**: Mengubah 220V AC menjadi 5V DC stabil untuk menyuplai ESP32-S3, LoRa E220, Kipas, dan Flash LED.
+- **Flash LED (LED Pentol 5mm)**: `GPIO 47` (dihubungkan seri dengan resistor 150Ω–220Ω langsung ke LED pentol putih, tanpa perlu driver MOSFET besar)
+- **Kendali Kipas DC 5V (Jadwal RTC 07:00 – 17:00)**: `GPIO 21` (mengendalikan Basis transistor NPN 2N2222 melalui resistor 1kΩ. Kipas menyala otomatis jam 7 pagi s/d 5 sore, dan status pin dipertahankan selama Deep Sleep via `gpio_hold_en`)
+- **Catu Daya HLK 5V 2A**: Mengubah 220V AC menjadi 5V DC stabil untuk menyuplai ESP32-S3, LoRa E220, Kipas, dan LED Flash.
 
 ---
 
@@ -64,15 +64,15 @@ Sesuai aplikasi resmi **E220_V1.1**:
 
 ## 💡 3. Saran & Evaluasi Teknis Sistem
 
-1. **Rekomendasi Lampu Flash LED Putih:**
-   - **Jenis yang Disarankan:** **1W atau 3W High-Power LED Bead Cool White (6000K–6500K)** beralas *Star PCB Aluminium*, atau **Modul COB LED 5V Sudut Lebar (120°)**.
-   - **Alasan Teknis:** Suhu warna 6000K–6500K menghasilkan kontras warna paling tinggi antara papan perangkap feromon (kuning/putih) dan serangga hama.
-   - **Rangkaian Driver:** Jangan sambungkan LED langsung ke pin ESP32-S3! Gunakan **N-Channel MOSFET (AOD4184 / IRLZ44N)** yang dikontrol via GPIO 47. Rangkaian lengkap tersedia di [SKEMA_FLASH_LED_DAN_POWER.md](file:///d:/KULIAH/4.%20Project%20Lab%20ELINS/Pemantauan%20Hama/Program%20Insect%20Trap/V3_ESP32S3_LoRa_Trap/1_Panduan_Hardware_dan_Wiring/SKEMA_FLASH_LED_DAN_POWER.md).
+1. **Lampu Flash LED Pentol Putih 5mm (Hemat & Ringkas):**
+   - Menggunakan LED pentol putih bulat biasa (DIP 5mm) yang dipasang seri dengan resistor 150Ω – 220Ω (1/4W) langsung ke pin `GPIO 47` dan `GND`.
+   - **Kelebihan:** Sangat praktis, tidak memerlukan modul driver MOSFET berdaya besar 1-3 Watt, dan aman bagi pin ESP32-S3 karena arus kerja hanya ~15 mA.
+   - Cahaya putih dingin tetap memberikan kontras tajam pada permukaan lem perekat serangga.
 
-2. **Kipas Pendingin DC 5V (Continuous Cooling):**
-   - Sangat tepat dinyalakan terus-menerus karena kotak perangkap di kebun terkena radiasi panas matahari yang dapat menaikkan suhu internal kotak hingga >50°C.
-   - Pasang kipas pada posisi **Exhaust (menyedot udara panas ke luar)** di bagian atas kotak, dan buat lubang ventilasi masuk ber-kisi (*louvers*) miring ke bawah di bagian bawah kotak agar air hujan tidak tampias masuk.
-   - Berikan kapasitor elektrolit **100µF/16V** di pin daya kipas untuk meredam kebisingan induktif motor.
+2. **Kipas Pendingin DC 5V (Trigger Waktu RTC 07:00 – 17:00):**
+   - Kipas dikontrol otomatis menyala pada siang hari (jam 7 pagi hingga 5 sore) saat suhu terik matahari tinggi, dan mati otomatis pada malam hari untuk memperpanjang usia motor dan efisiensi energi.
+   - Dikendalikan oleh `GPIO 21` via transistor NPN kecil (2N2222 / SS8050) dengan resistor basis 1kΩ.
+   - Status pin dipertahankan (*pin hold*) selama mikrokontroler berada dalam mode Deep Sleep menggunakan perintah `gpio_hold_en((gpio_num_t)FAN_PIN);` dan `gpio_deep_sleep_hold_en();`.
 
 3. **Perlukah Dibuatkan Dashboard?**
    - **Sangat Perlu!** Karena sistem memotret 1x sehari untuk menghitung serangga (*image counting*), petani/peneliti membutuhkan antarmuka visual terpusat yang:

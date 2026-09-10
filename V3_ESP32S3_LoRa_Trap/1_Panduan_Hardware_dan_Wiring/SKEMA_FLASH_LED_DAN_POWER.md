@@ -1,106 +1,89 @@
-# Skema Driver Flash LED, Rekomendasi Lampu, & Manajemen Daya HLK 5V
+# Skema Rangkaian Flash LED Pentol 5mm, Sakelar Kipas RTC, & Daya HLK
 
-Dokumen ini memuat detail teknis rekomendasi jenis lampu flash, rangkaian penggerak (*driver*) menggunakan transistor/MOSFET, penyaringan interferensi kipas, dan perlindungan suplai daya HLK 5V 2A.
-
----
-
-## 💡 1. Rekomendasi Lampu Flash LED Putih
-
-Untuk memotret lem perekat serangga di dalam kotak perangkap (*trap box*) yang tertutup rapat dan gelap, pemilihan lampu LED sangat menentukan akurasi penghitungan serangga (*image counting*).
-
-### A. Karakteristik LED yang Dibutuhkan:
-1. **Warna Cahaya:** **Pure White / Cool White (6000K – 6500K)**
-   - Cahaya putih dingin memberikan kontras maksimal antara warna kuning/putih pada papan perangkap feromon dan warna serangga hama (biasanya hitam, cokelat tua, abu-abu, atau hijau tua).
-2. **Pola Sorotan:** **Wide Flood / Sebaran Lebar (120° – 140°)**
-   - Hindari lampu sorot (*spotlight/lensa cembung kecil*) karena akan menimbulkan titik putih menyilaukan (*hotspot glare*) di tengah foto dan sudutnya gelap.
-   - Pilihlah LED dengan sudut sebaran rata agar seluruh permukaan lem perekat terang merata.
-3. **Daya:** **1 Watt atau 3 Watt (Tegangan Kerja 3.2V – 3.6V, Arus 300mA – 700mA)**
-   - Menghasilkan lumen berkisar 100–220 Lumen, cukup untuk menerangi ruang perangkap berjarak 10–30 cm dari kamera OV3660.
-
-### B. Jenis Produk yang Sangat Direkomendasikan di Pasaran:
-1. **Opsi 1 (Paling Direkomendasikan & Murah): High Power LED Star 1W / 3W (Cool White)**
-   - Bentuk: PCB heksagonal aluminium (*Star PCB*) dengan 1 mata LED di tengah.
-   - Sangat mudah dipasang dengan sekrup atau lem termal di samping lensa kamera OV3660.
-2. **Opsi 2: Modul LED 5V Transistor Ready (Contoh: Keyestudio / RobotDyn 5V LED Module)**
-   - Kelebihan: Sudah ada transistor dan resistor internal di modulnya, tinggal colok VCC 5V, GND, dan Signal ke GPIO 47.
-3. **Opsi 3: Potongan Strip LED 5V COB (Chip-on-Board) Cool White (Panjang 5 cm)**
-   - Kelebihan: Cahaya sangat merata tanpa bayangan titik, bentuk fleksibel bisa ditempel melingkari area lensa kamera.
+Dokumen ini memuat detail teknis rangkaian lampu flash menggunakan **LED Pentol Putih 5mm biasa**, rangkaian sakelar elektronik **Kipas DC 5V dengan pemicu waktu RTC (07:00 – 17:00)**, dan suplai daya HLK 5V 2A.
 
 ---
 
-## ⚡ 2. Skema Rangkaian Driver Flash LED (MOSFET)
+## 💡 1. Lampu Flash LED Pentol Putih 5mm (Langsung GPIO 47)
 
-> 🛑 **PERINGATAN BAHAYA:**
-> Jangan pernah menghubungkan LED 1W/3W langsung ke pin GPIO ESP32-S3! 
-> GPIO ESP32-S3 hanya mampu mengalirkan arus maksimal **12 mA - 20 mA**. Jika dipaksa menarik arus 300 mA+, pin GPIO akan terbakar permanen atau menyebabkan ESP32-S3 mengalami *Brownout Reset*.
+Sesuai permintaan, sistem disederhanakan menggunakan **LED pentol putih biasa (DIP 5mm / Through-Hole)** sehingga **tidak memerlukan driver MOSFET besar atau modul 1–3 Watt**.
 
-Gunakan rangkaian driver sakelar elektronik menggunakan **N-Channel Logic-Level MOSFET** (contoh: **AOD4184, IRLZ44N, AO3400**) atau transistor NPN (**2N2222, TIP120, SS8050**).
+### A. Karakteristik Listrik:
+- **Tegangan Maju ($V_F$):** 3.0V – 3.2V
+- **Arus Kerja ($I_F$):** 15 mA – 20 mA
+- **Kemampuan Pin GPIO ESP32-S3:** Mampu mengalirkan arus hingga 20 mA. Karena kebutuhan arus LED pentol hanya ~15 mA, LED dapat **dihubungkan langsung ke pin GPIO 47** dengan penambahan satu buah resistor pembatas arus (*current limiting resistor*).
 
-### Rangkaian Menggunakan N-Channel MOSFET:
+### B. Perhitungan Resistor Pembatas Arus:
+$$R = \frac{V_{GPIO} - V_{LED}}{I_{LED}} = \frac{3.3\text{V} - 3.0\text{V}}{0.015\text{A}} \approx 20\Omega$$
+Untuk menjaga keawetan LED dan kestabilan mikrokontroler, gunakan nilai standar:
+- **R = 150Ω atau 220Ω (1/4 Watt)**
 
+### C. Skema Pengkabelan Flash LED:
 ```text
-       +5V HLK ────┬────────────────────────────────┐
-                   │                                │
-                   │                          ┌─────┴──────┐
-                   │                          │  LED 1W    │
-                   │                          │ Cool White │
-                   │                          │  (Anoda +) │
-                   │                          └─────┬──────┘
-                   │                                │ (Katoda -)
-                   │                                ▼
-                   │                         [ R_drop 2.2Ω 2W ]
-                   │                                │
-                   │                             (DRAIN)
-                   │                         ┌──────────────┐
-  GPIO 47 ──[ R1: 220Ω ]───┬─────────────────┤    MOSFET    │
-                           │                 │   AOD4184    │
-                       [ R2: 10kΩ ]          │   IRLZ44N    │
-                           │                 └──────┬───────┘
-  GND     ─────────────────┴────────────────────────┴ (SOURCE)
+  ESP32-S3 GPIO 47 ─────[ Resistor 150Ω - 220Ω ]─────(+) [ LED Pentol 5mm ] (─)─────► GND
+                                                    (Kaki Panjang)   (Kaki Pendek)
 ```
 
-### Penjelasan Komponen:
-- **R1 (Gate Resistor - 220Ω):** Membatasi arus lonjakan (*inrush current*) saat kapasitansi Gate MOSFET mulai mengisi daya dari pin GPIO 47.
-- **R2 (Pull-Down Resistor - 10kΩ):** Menjaga Gate tetap 0V (mati total) saat ESP32-S3 sedang booting atau berada di mode *Deep Sleep*.
-- **R_drop (Current Limiting Resistor - 2.2Ω / 2 Watt):**
-  - Mengurangi tegangan dari 5V ke tegangan kerja LED (~3.3V) pada arus ~350 mA:
-    $$R = \frac{V_{in} - V_{LED}}{I_{LED}} = \frac{5V - 3.3V}{0.35A} \approx 4.8\Omega \text{ (atau 2.2}\Omega \text{ untuk 3W)}$$
-  - Jika menggunakan Modul LED yang sudah memiliki resistor bawaan, resistor eksternal ini tidak diperlukan lagi.
-
 ---
 
-## ❄️ 3. Kipas DC 5V (Pendinginan Box 24/7)
+## ❄️ 2. Rangkaian Sakelar Kipas DC 5V (Trigger Waktu RTC 07:00 - 17:00)
 
-Karena kotak perangkat berada di kebun terbuka di bawah sinar matahari langsung, suhu di dalam box kedap air (*waterproof enclosure*) dapat mencapai 45°C - 55°C, yang dapat menyebabkan kamera buram atau ESP32 hang.
+Kipas mini DC 5V mengonsumsi arus sekitar **100 mA – 150 mA**. Karena arus ini melebihi kapasitas pin GPIO (maks. 20 mA), kipas **TIDAK BOLEH** dihubungkan langsung ke pin mikrokontroler. Kita menggunakan **1 buah transistor NPN kecil serbaguna** (seperti **2N2222, SS8050, atau BC547**) sebagai sakelar otomatis.
 
-### Tips Desain Sirkulasi Udara Box:
-1. **Posisi Kipas:** Pasang kipas mini 5V (ukuran 30x30 mm atau 40x40 mm) sebagai **Exhaust (penyedot udara panas ke luar)** di sisi atas kotak.
-2. **Ventilasi Masuk (Intake):** Buat kisi-kisi udara masuk di sisi bawah dengan pelindung louvers/kisi miring 45° menghadap ke bawah agar air hujan dan debu tidak masuk ke dalam box.
-3. **Filter Noise Kipas:** Motor DC kipas menghasilkan dengung induktif (*inductive spike*). Untuk menjaga kestabilan sinyal LoRa dan pembacaan ADC ESP32:
-   - Pasang kapasitor elektrolit **100µF / 16V** secara paralel tepat di kaki VCC dan GND kipas.
+### A. Komponen Rangkaian Kipas:
+1. **Transistor NPN:** 2N2222 / SS8050 / BD139 (kemasan TO-92 kecil dan murah)
+2. **Resistor Basis:** 1 kΩ (1/4 Watt)
+3. **Dioda Proteksi (Flyback):** 1N4148 atau 1N4007 (mencegah lonjakan tegangan induksi saat kipas mati)
 
----
-
-## 🔌 4. Unit Catu Daya (HLK 5V 2A)
-
-Modul **Hi-Link HLK 5V 2A** (contoh: HLK-10M05 atau HLK-PM01 5V 2A) adalah modul AC-to-DC terisolasi yang andal.
-
-### Perhitungan Kebutuhan Beban Daya Maksimal:
-- ESP32-S3-CAM (Kamera aktif & Wi-Fi off): ~160 mA
-- LoRa Ebyte E220-900T22D (Transmisi 22 dBm): ~120 mA
-- Sensor DHT22 & RTC DS3231: ~2 mA
-- Kipas DC 5V (terus menyala): ~100 mA
-- Lampu Flash LED (pulsa singkat ~1 detik): ~350 mA
-- **Total Arus Puncak Maksimal:** **~732 mA**
-- **Kapasitas HLK:** **2000 mA (2A)**. Margin keamanan catu daya sangat lega (>60%), menjamin sistem tidak akan kekurangan daya.
-
-### Diagram Pengamanan Input AC 220V:
+### B. Skema Rangkaian Sakelar Kipas:
 ```text
-  PLN 220V Line (L) ─────[ Sekring/Fuse 1A ]─────┐
-                                                  [ HLK 5V 2A ]
-  PLN 220V Neutral (N) ──────────────────────────┘
-           │                                 │
-           └────────[ Varistor 10D471K ]─────┘ (Proteksi Petir/Surge)
+                    +5V HLK ────┬─────────────────────────────┐
+                                │                             │
+                                │                      ┌──────┴──────┐
+                                │                      │   Kipas 5V  │
+                                │                   (+)│ (Kabel Merah│
+                                │                      └──────┬──────┘
+                                │                             │ (─) Kabel Hitam
+                        [ Dioda 1N4007 ]                      │
+                        (Katoda / Garis)                      │
+                                ▲                             │
+                                └─────────────────────────────┤ (KOLEKTOR)
+                                                              │
+                                                       ┌──────┴──────┐
+  GPIO 21 ─────────────[ Resistor 1kΩ ]───────────────┤  Transistor │
+  (ESP32-S3)                                   (BASIS)│   2N2222    │
+                                                      │  (EMITOR)   │
+                                                      └──────┬──────┘
+  GND ───────────────────────────────────────────────────────┴────────► GND
 ```
-- **Fuse 1A:** Mencegah korsleting jika terjadi gangguan internal.
-- **Varistor MOV (10D471K):** Menyerap lonjakan tegangan transien akibat sambaran petir di sekitar tiang kebun.
+
+### C. Cara Kerja Otomatisasi Waktu RTC:
+1. Saat ESP32-S3 bangun, program membaca jam dari RTC DS3231:
+   ```cpp
+   int jamSekarang = now.hour();
+   bool fanShouldBeOn = (jamSekarang >= 7 && jamSekarang < 17);
+   ```
+2. **Jika Pukul 07:00 – 17:00:**
+   - Program menyetel `GPIO 21 = HIGH (3.3V)`.
+   - Transistor 2N2222 aktif jenuh (*saturation*), menghubungkan kutub negatif kipas ke GND. Kipas menyala berputar.
+   - Program memanggil fungsi `gpio_hold_en((gpio_num_t)FAN_PIN);` dan `gpio_deep_sleep_hold_en();`.
+   - **Kipas tetap berputar mendinginkan box meskipun ESP32-S3 sedang berada dalam kondisi Deep Sleep!**
+3. **Jika Pukul 17:01 – 06:59 (Malam Hari):**
+   - Suhu lingkungan di kebun sudah dingin dan tidak ada terik matahari.
+   - Program menyetel `GPIO 21 = LOW (0V)`.
+   - Transistor mati (*cutoff*), kipas berhenti berputar untuk menghemat daya dan memperpanjang umur motor kipas.
+
+---
+
+## 🔌 3. Unit Catu Daya (HLK 5V 2A)
+
+Modul **Hi-Link HLK 5V 2A** (Input 220V AC, Output 5V DC 2A / 10 Watt) menyuplai seluruh sistem dengan sangat aman.
+
+### Rekap Konsumsi Arus Sistem:
+- ESP32-S3-CAM aktif: ~160 mA
+- LoRa Ebyte E220 transmisi: ~120 mA
+- Sensor DHT22 + RTC DS3231: ~2 mA
+- Lampu Flash LED Pentol 5mm: ~15 mA (hanya saat jepret ~0.4 detik)
+- Kipas DC 5V (jam 07:00–17:00): ~120 mA
+- **Total Arus Beban Puncak:** **~417 mA**
+- **Kapasitas HLK:** **2000 mA (2A)**. Beban riil hanya menggunakan sekitar **20%** dari kapasitas maksimal HLK, sehingga adaptor bekerja sangat dingin dan awet 24/7.
