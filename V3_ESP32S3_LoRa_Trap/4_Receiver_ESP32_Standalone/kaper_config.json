@@ -1,0 +1,10 @@
+{
+    "blur_kernel": 5,
+    "thresh_offset": 0,
+    "min_area": 20,
+    "max_area": 25000,
+    "min_aspect_ratio": 0.2,
+    "max_aspect_ratio": 5.0,
+    "use_watershed": true,
+    "clahe_clip": 2.5
+}

@@ -1,7 +1,8 @@
 """
 ====================================================================================
-WEB DASHBOARD SERVER - RASPBERRY PI 5 (FLASK & REST API)
+WEB DASHBOARD SERVER - RASPBERRY PI 5 (FLASK & REST API - MULTI-NODE)
 Fitur    : - Web Dashboard responsif pemantauan perangkap hama real-time
+           - Dukungan multi-node: Memilih data per node (NODE_01, NODE_02)
            - Visualisasi grafik suhu, kelembaban, dan tren populasi hama (Chart.js)
            - Perbandingan foto perangkap asli vs hasil deteksi AI (Bounding Box)
            - Galeri riwayat foto dan ekspor laporan CSV
@@ -32,23 +33,47 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/nodes")
+def api_nodes():
+    """Mengembalikan daftar seluruh Node ID yang aktif."""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("SELECT DISTINCT node_id FROM sensor_logs UNION SELECT DISTINCT node_id FROM image_logs")
+    rows = c.fetchall()
+    conn.close()
+
+    nodes = [r[0] for r in rows if r[0]]
+    if not nodes:
+        nodes = ["NODE_01", "NODE_02"]
+    return jsonify({"status": "success", "nodes": sorted(nodes)})
+
+
 @app.route("/api/latest")
 def api_latest():
-    """Mengembalikan pembacaan sensor dan hasil deteksi serangga terbaru."""
+    """Mengembalikan pembacaan sensor dan hasil deteksi kaper terbaru (bisa difilter per node)."""
+    node = request.args.get("node")
+
     conn = get_db_connection()
     c = conn.cursor()
 
     # Ambil sensor terbaru
-    c.execute("SELECT * FROM sensor_logs ORDER BY id DESC LIMIT 1")
+    if node:
+        c.execute("SELECT * FROM sensor_logs WHERE node_id = ? ORDER BY id DESC LIMIT 1", (node,))
+    else:
+        c.execute("SELECT * FROM sensor_logs ORDER BY id DESC LIMIT 1")
     latest_sensor = c.fetchone()
 
     # Ambil gambar & deteksi hama terbaru
-    c.execute("SELECT * FROM image_logs ORDER BY id DESC LIMIT 1")
+    if node:
+        c.execute("SELECT * FROM image_logs WHERE node_id = ? ORDER BY id DESC LIMIT 1", (node,))
+    else:
+        c.execute("SELECT * FROM image_logs ORDER BY id DESC LIMIT 1")
     latest_image = c.fetchone()
 
     conn.close()
 
     sensor_data = {
+        "node_id": latest_sensor["node_id"] if latest_sensor and "node_id" in latest_sensor.keys() else (node or "NODE_01"),
         "suhu": latest_sensor["suhu"] if latest_sensor else 0.0,
         "kelembaban": latest_sensor["kelembaban"] if latest_sensor else 0.0,
         "waktu_rtc": latest_sensor["waktu_rtc"] if latest_sensor else "Menunggu data...",
@@ -57,6 +82,7 @@ def api_latest():
 
     image_data = {
         "has_image": latest_image is not None,
+        "node_id": latest_image["node_id"] if latest_image and "node_id" in latest_image.keys() else (node or "NODE_01"),
         "raw_url": f"/static/captures/{latest_image['filename_raw']}" if latest_image else "",
         "annotated_url": f"/static/annotated/{latest_image['filename_annotated']}" if latest_image else "",
         "insect_count": latest_image["insect_count"] if latest_image else 0,
@@ -75,9 +101,14 @@ def api_latest():
 @app.route("/api/history")
 def api_history():
     """Mengembalikan riwayat sensor (30 data terakhir) untuk grafik Chart.js."""
+    node = request.args.get("node")
+
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM sensor_logs ORDER BY id DESC LIMIT 30")
+    if node:
+        c.execute("SELECT * FROM sensor_logs WHERE node_id = ? ORDER BY id DESC LIMIT 30", (node,))
+    else:
+        c.execute("SELECT * FROM sensor_logs ORDER BY id DESC LIMIT 30")
     rows = c.fetchall()
     conn.close()
 
@@ -97,10 +128,15 @@ def api_history():
 
 @app.route("/api/detections")
 def api_detections():
-    """Mengembalikan riwayat seluruh tangkapan gambar dan populasi serangga."""
+    """Mengembalikan riwayat tangkapan gambar dan populasi kupu kaper."""
+    node = request.args.get("node")
+
     conn = get_db_connection()
     c = conn.cursor()
-    c.execute("SELECT * FROM image_logs ORDER BY id DESC LIMIT 20")
+    if node:
+        c.execute("SELECT * FROM image_logs WHERE node_id = ? ORDER BY id DESC LIMIT 20", (node,))
+    else:
+        c.execute("SELECT * FROM image_logs ORDER BY id DESC LIMIT 20")
     rows = c.fetchall()
     conn.close()
 
@@ -108,6 +144,7 @@ def api_detections():
     for r in rows:
         results.append({
             "id": r["id"],
+            "node_id": r["node_id"] if "node_id" in r.keys() else "NODE_01",
             "timestamp": r["waktu_rtc"],
             "raw_url": f"/static/captures/{r['filename_raw']}",
             "annotated_url": f"/static/annotated/{r['filename_annotated']}",
@@ -156,5 +193,4 @@ if __name__ == "__main__":
     print("  Atau dari perangkat lain di LAN : http://<IP_RASPBERRY_PI>:5000")
     print("========================================================\n")
 
-    # Jalankan Flask Server di port 5000 dapat diakses dari jaringan lokal (0.0.0.0)
     app.run(host="0.0.0.0", port=5000, debug=False)

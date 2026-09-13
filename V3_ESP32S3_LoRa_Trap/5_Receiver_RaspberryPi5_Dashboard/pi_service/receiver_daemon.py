@@ -1,10 +1,11 @@
 """
 ====================================================================================
-SERVICE RECEIVER DAEMON - RASPBERRY PI 5
+SERVICE RECEIVER DAEMON - RASPBERRY PI 5 (MULTI-NODE SUPPORT)
 Fungsi   : - Membaca aliran data serial dari ESP32 LoRa Bridge secara background
-           - Menyimpan data suhu, kelembaban, dan waktu ke SQLite & CSV
-           - Menangkap dan merekonstruksi aliran biner gambar JPEG
-           - Memicu eksekusi otomatis deteksi serangga (insect_counter.py)
+           - Mendukung banyak transmitter (NODE_01, NODE_02, dst)
+           - Menyimpan data suhu, kelembaban, waktu, dan Node ID ke SQLite & CSV
+           - Menangkap dan merekonstruksi aliran biner gambar JPEG per Node
+           - Memicu eksekusi otomatis deteksi kupu kaper (kaper_counter_rpi5.py)
            - Memperbarui database pemantauan secara real-time
 Lab ELINS - Universitas Gadjah Mada
 ====================================================================================
@@ -16,8 +17,8 @@ import time
 import os
 import sqlite3
 import csv
-import threading
-from insect_counter import InsectCounter
+import re
+from kaper_counter_rpi5 import RaspberryPiKaperCounter
 
 # --- PENGATURAN DIREKTORI & DATABASE ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -29,12 +30,12 @@ ANNOTATED_DIR = os.path.join(BASE_DIR, "static", "annotated")
 os.makedirs(CAPTURES_DIR, exist_ok=True)
 os.makedirs(ANNOTATED_DIR, exist_ok=True)
 
-# Inisialisasi Detektor Serangga
-counter_engine = InsectCounter(min_area=15, max_area=2500)
+# Inisialisasi Detektor Serangga Kaper RPi5
+counter_engine = RaspberryPiKaperCounter()
 
 
 def init_database():
-    """Membuat tabel database SQLite jika belum ada."""
+    """Membuat dan memutakhirkan tabel SQLite untuk multi-node."""
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
@@ -43,6 +44,7 @@ def init_database():
     CREATE TABLE IF NOT EXISTS sensor_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_pc TEXT,
+        node_id TEXT DEFAULT 'NODE_01',
         waktu_rtc TEXT,
         suhu REAL,
         kelembaban REAL
@@ -54,6 +56,7 @@ def init_database():
     CREATE TABLE IF NOT EXISTS image_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp_pc TEXT,
+        node_id TEXT DEFAULT 'NODE_01',
         waktu_rtc TEXT,
         filename_raw TEXT,
         filename_annotated TEXT,
@@ -63,6 +66,17 @@ def init_database():
     )
     """)
 
+    # Migrasi skema jika tabel lama belum memiliki kolom node_id
+    try:
+        cursor.execute("ALTER TABLE sensor_logs ADD COLUMN node_id TEXT DEFAULT 'NODE_01'")
+    except Exception:
+        pass
+
+    try:
+        cursor.execute("ALTER TABLE image_logs ADD COLUMN node_id TEXT DEFAULT 'NODE_01'")
+    except Exception:
+        pass
+
     conn.commit()
     conn.close()
 
@@ -70,7 +84,7 @@ def init_database():
     if not os.path.exists(CSV_PATH):
         with open(CSV_PATH, mode='w', newline='') as f:
             writer = csv.writer(f)
-            writer.writerow(["Timestamp_PC", "Waktu_RTC", "Suhu_C", "Kelembaban_RH"])
+            writer.writerow(["Timestamp_PC", "Node_ID", "Waktu_RTC", "Suhu_C", "Kelembaban_RH"])
 
 
 def find_serial_port(preferred_port=None):
@@ -80,29 +94,73 @@ def find_serial_port(preferred_port=None):
 
     ports = serial.tools.list_ports.comports()
     for p in ports:
-        # Deteksi port serial ESP32 / CH340 / CP2102 / ACM
         p_name = p.device
         desc = p.description.lower()
         if "usb" in p_name.lower() or "acm" in p_name.lower() or "cp210" in desc or "ch340" in desc or "uart" in desc:
             return p_name
 
-    # Default port Raspberry Pi jika ada
     if os.path.exists("/dev/ttyUSB0"):
         return "/dev/ttyUSB0"
     if os.path.exists("/dev/ttyACM0"):
         return "/dev/ttyACM0"
 
-    # Jika di Windows dan ada COM yang aktif
     if ports:
         return ports[0].device
 
     return None
 
 
+def parse_sensor_line(text, fallback_time):
+    """Mem-parse string sensor dan mengekstrak Node ID."""
+    node_id = "NODE_01"
+    suhu = 0.0
+    kelembaban = 0.0
+    waktu_rtc = fallback_time
+
+    if text.startswith("[DATA]"):
+        clean_str = text[text.find("[DATA]"):]
+        parts = [p.strip() for p in clean_str.split(",")]
+        for p in parts:
+            if "Node:" in p:
+                node_id = p.replace("[DATA]", "").replace("Node:", "").strip()
+            elif "Waktu:" in p:
+                waktu_rtc = p.replace("[DATA] Waktu:", "").strip()
+            elif "Suhu:" in p:
+                try:
+                    suhu = float(p.replace("Suhu:", "").replace("C", "").strip())
+                except ValueError:
+                    pass
+            elif "Kelembaban:" in p:
+                try:
+                    kelembaban = float(p.replace("Kelembaban:", "").replace("%", "").strip())
+                except ValueError:
+                    pass
+    elif text.startswith("SENSOR,"):
+        parts = [p.strip() for p in text.split(",")]
+        if len(parts) >= 6:
+            node_id = parts[1].strip()
+            try:
+                suhu = float(parts[2].strip())
+                kelembaban = float(parts[3].strip())
+            except ValueError:
+                pass
+            waktu_rtc = f"{parts[4].strip()} {parts[5].strip()}"
+
+    return node_id, waktu_rtc, suhu, kelembaban
+
+
+def extract_node_from_header(header_text):
+    """Mengekstrak ID node dari format ---START:NODE_XX---"""
+    match = re.search(r'---START:(NODE_\w+)---', header_text, re.IGNORECASE)
+    if match:
+        return match.group(1).upper()
+    return "NODE_01"
+
+
 def run_receiver(port=None, baudrate=115200):
     """Loop utama penerimaan serial LoRa di Raspberry Pi 5."""
     init_database()
-    print("[RECEIVER DAEMON] Memulai receiver LoRa...")
+    print("[RECEIVER DAEMON] Memulai receiver LoRa Multi-Node Raspberry Pi 5...")
 
     while True:
         target_port = find_serial_port(port)
@@ -119,7 +177,8 @@ def run_receiver(port=None, baudrate=115200):
             time.sleep(3)
             continue
 
-        latest_rtc_time = time.strftime("%Y-%m-%d %H:%M:%S")
+        latest_rtc_times = {"NODE_01": time.strftime("%Y-%m-%d %H:%M:%S"),
+                            "NODE_02": time.strftime("%Y-%m-%d %H:%M:%S")}
 
         while True:
             try:
@@ -130,137 +189,124 @@ def run_receiver(port=None, baudrate=115200):
                 text = line.decode('utf-8', errors='ignore').strip()
 
                 # ------------------------------------------------------------------
-                # 1. PARSING DATA SENSOR
+                # 1. PARSING DATA SENSOR MULTI-NODE
                 # ------------------------------------------------------------------
                 if text.startswith("[DATA]") or text.startswith("SENSOR,"):
                     print(f"\n[+] SENSOR DATA DITERIMA: {text}")
-                    suhu = 0.0
-                    kelembaban = 0.0
-                    waktu_rtc = latest_rtc_time
+                    now_pc = time.strftime("%Y-%m-%d %H:%M:%S")
+                    node_id, waktu_rtc, suhu, kelembaban = parse_sensor_line(text, now_pc)
 
-                    try:
-                        if text.startswith("[DATA]"):
-                            # Format: [DATA] Waktu: 2026-09-10 10:30:00, Suhu: 28.5 C, Kelembaban: 75.0 %
-                            parts = text.split(",")
-                            for p in parts:
-                                p = p.strip()
-                                if "Waktu:" in p:
-                                    waktu_rtc = p.replace("[DATA] Waktu:", "").strip()
-                                elif "Suhu:" in p:
-                                    suhu = float(p.replace("Suhu:", "").replace("C", "").strip())
-                                elif "Kelembaban:" in p:
-                                    kelembaban = float(p.replace("Kelembaban:", "").replace("%", "").strip())
-                        else:
-                            # Format: SENSOR,NODE01,28.5,75.0,10-09-2026,10:30:00
-                            parts = text.split(",")
-                            suhu = float(parts[2].strip())
-                            kelembaban = float(parts[3].strip())
-                            waktu_rtc = f"{parts[4].strip()} {parts[5].strip()}"
+                    latest_rtc_times[node_id] = waktu_rtc
 
-                        latest_rtc_time = waktu_rtc
-                        now_pc = time.strftime("%Y-%m-%d %H:%M:%S")
+                    # Simpan ke SQLite
+                    conn = sqlite3.connect(DB_PATH)
+                    c = conn.cursor()
+                    c.execute("""
+                    INSERT INTO sensor_logs (timestamp_pc, node_id, waktu_rtc, suhu, kelembaban) 
+                    VALUES (?, ?, ?, ?, ?)
+                    """, (now_pc, node_id, waktu_rtc, suhu, kelembaban))
+                    conn.commit()
+                    conn.close()
 
-                        # Simpan ke SQLite
-                        conn = sqlite3.connect(DB_PATH)
-                        c = conn.cursor()
-                        c.execute("INSERT INTO sensor_logs (timestamp_pc, waktu_rtc, suhu, kelembaban) VALUES (?, ?, ?, ?)",
-                                  (now_pc, waktu_rtc, suhu, kelembaban))
-                        conn.commit()
-                        conn.close()
+                    # Simpan ke CSV
+                    with open(CSV_PATH, mode='a', newline='') as f:
+                        writer = csv.writer(f)
+                        writer.writerow([now_pc, node_id, waktu_rtc, suhu, kelembaban])
 
-                        # Simpan ke CSV
-                        with open(CSV_PATH, mode='a', newline='') as f:
-                            writer = csv.writer(f)
-                            writer.writerow([now_pc, waktu_rtc, suhu, kelembaban])
-
-                        print(f"[OK] Sensor tersimpan: Suhu={suhu}°C, RH={kelembaban}%, Waktu={waktu_rtc}")
-
-                    except Exception as err:
-                        print(f"[ERROR] Gagal parsing sensor: {err}")
+                    print(f"[OK] Sensor [{node_id}] tersimpan: Suhu={suhu}°C, RH={kelembaban}%, Waktu={waktu_rtc}")
 
                 # ------------------------------------------------------------------
-                # 2. PENERIMAAN ALIRAN GAMBAR BINER
+                # 2. PENERIMAAN ALIRAN GAMBAR BINER MULTI-NODE
                 # ------------------------------------------------------------------
-                elif "---START---" in text:
-                    print("\n[*] MEMULAI PENERIMAAN GAMBAR DARI LORA...")
+                elif "---START" in text:
+                    node_id = extract_node_from_header(text)
+                    print(f"\n[*] MEMULAI PENERIMAAN GAMBAR DARI LORA [{node_id}]...")
                     expected_length = 0
 
-                    # Format bisa ---START---<length> atau baris berikutnya adalah length
-                    if len(text.split("---START---")) > 1 and text.split("---START---")[1].strip().isdigit():
-                        expected_length = int(text.split("---START---")[1].strip())
+                    after_tag = text.split("---")[-1].strip()
+                    if after_tag.isdigit():
+                        expected_length = int(after_tag)
                     else:
                         next_line = ser.readline().decode('utf-8', errors='ignore').strip()
                         if next_line.isdigit():
                             expected_length = int(next_line)
 
                     if expected_length <= 0:
-                        print("[ERROR] Ukuran gambar tidak valid. Pembatalan.")
+                        print(f"[ERROR] Ukuran gambar [{node_id}] tidak valid. Pembatalan.")
                         continue
 
-                    print(f"[*] Ukuran data yang diharapkan: {expected_length} bytes.")
+                    print(f"[*] Ukuran data yang diharapkan [{node_id}]: {expected_length} bytes.")
                     image_buffer = bytearray()
                     start_time = time.time()
 
-                    # Baca aliran byte biner hingga ukuran terpenuhi
                     while len(image_buffer) < expected_length:
                         sisa = expected_length - len(image_buffer)
                         chunk = ser.read(min(180, sisa))
                         if chunk:
                             image_buffer.extend(chunk)
                             pct = (len(image_buffer) / expected_length) * 100.0
-                            print(f"\rProgress Download: {len(image_buffer)} / {expected_length} B ({pct:.1f}%)", end="")
+                            print(f"\rProgress [{node_id}]: {len(image_buffer)} / {expected_length} B ({pct:.1f}%)", end="")
                         else:
-                            # Cek timeout jika tidak ada byte masuk selama 15 detik
                             if time.time() - start_time > 60:
-                                print("\n[WARNING] Timeout pengunduhan gambar.")
+                                print(f"\n[WARNING] Timeout pengunduhan gambar [{node_id}].")
                                 break
 
-                    print() # Baris baru
+                    print()
 
-                    # Baca marker END jika ada di serial buffer
                     time.sleep(0.1)
                     if ser.in_waiting:
-                        tail = ser.read(ser.in_waiting)
-                        # Bersihkan tail
+                        ser.read(ser.in_waiting)
 
-                    # Simpan file gambar mentah
+                    # Subfolder per Node
+                    node_capture_dir = os.path.join(CAPTURES_DIR, node_id)
+                    node_annotated_dir = os.path.join(ANNOTATED_DIR, node_id)
+                    os.makedirs(node_capture_dir, exist_ok=True)
+                    os.makedirs(node_annotated_dir, exist_ok=True)
+
                     timestamp_str = time.strftime("%Y%m%d_%H%M%S")
-                    raw_filename = f"trap_{timestamp_str}.jpg"
-                    raw_filepath = os.path.join(CAPTURES_DIR, raw_filename)
+                    raw_filename = f"trap_{node_id}_{timestamp_str}.jpg"
+                    raw_filepath = os.path.join(node_capture_dir, raw_filename)
 
                     with open(raw_filepath, "wb") as img_file:
                         img_file.write(image_buffer)
 
-                    print(f"[OK] Gambar mentah berhasil disimpan: {raw_filepath}")
+                    print(f"[OK] Gambar mentah [{node_id}] disimpan: {raw_filepath}")
 
                     # ------------------------------------------------------------------
-                    # 3. PROSES IMAGE COUNTING OTOMATIS
+                    # 3. PROSES PENGHITUNG KUPU KAPER
                     # ------------------------------------------------------------------
-                    annotated_filename = f"trap_{timestamp_str}_annotated.jpg"
-                    annotated_filepath = os.path.join(ANNOTATED_DIR, annotated_filename)
+                    annotated_filename = f"trap_{node_id}_{timestamp_str}_annotated.jpg"
+                    annotated_filepath = os.path.join(node_annotated_dir, annotated_filename)
 
                     try:
-                        print("[*] Menjalankan algoritma penghitung serangga otomatis...")
-                        count_result = counter_engine.process_image(raw_filepath, annotated_filepath)
+                        print(f"[*] Menjalankan deteksi kupu kaper RPi5 untuk [{node_id}]...")
+                        count_result = counter_engine.process_image(raw_filepath, annotated_filepath, node_id=node_id)
                         total_insects = count_result["total_count"]
                         threat_level = count_result["threat_level"]
+                        proc_time = count_result["process_time_ms"]
 
-                        print(f"[SUKSES DETEKSI] Jumlah Hama: {total_insects} | Status: {threat_level}")
+                        print(f"[SUKSES DETEKSI {node_id}] Kaper: {total_insects} Ekor | Status: {threat_level} ({proc_time} ms)")
 
-                        # Simpan hasil deteksi ke SQLite database
+                        # Simpan ke database
                         conn = sqlite3.connect(DB_PATH)
                         c = conn.cursor()
                         now_pc = time.strftime("%Y-%m-%d %H:%M:%S")
+                        waktu_rtc = latest_rtc_times.get(node_id, now_pc)
+
+                        # Simpan path relatif terhadap folder static untuk kemudahan web server
+                        rel_raw = f"{node_id}/{raw_filename}"
+                        rel_annotated = f"{node_id}/{annotated_filename}"
+
                         c.execute("""
                         INSERT INTO image_logs 
-                        (timestamp_pc, waktu_rtc, filename_raw, filename_annotated, insect_count, threat_level, file_size_bytes)
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                        """, (now_pc, latest_rtc_time, raw_filename, annotated_filename, total_insects, threat_level, len(image_buffer)))
+                        (timestamp_pc, node_id, waktu_rtc, filename_raw, filename_annotated, insect_count, threat_level, file_size_bytes)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                        """, (now_pc, node_id, waktu_rtc, rel_raw, rel_annotated, total_insects, threat_level, len(image_buffer)))
                         conn.commit()
                         conn.close()
 
                     except Exception as err:
-                        print(f"[ERROR] Gagal memproses deteksi serangga: {err}")
+                        print(f"[ERROR] Gagal memproses deteksi kupu kaper: {err}")
 
             except (serial.SerialException, OSError) as e:
                 print(f"[RECEIVER DAEMON] Koneksi serial terputus: {e}. Menghubungkan ulang...")
@@ -269,8 +315,7 @@ def run_receiver(port=None, baudrate=115200):
                 except Exception:
                     pass
                 break
-            except Exception as e:
-                # Abaikan noise byte
+            except Exception:
                 pass
 
 

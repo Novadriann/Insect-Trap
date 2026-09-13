@@ -21,6 +21,7 @@
 #include "DHT.h"
 #include "driver/rtc_io.h"
 #include "driver/gpio.h"
+#include "esp_sleep.h"
 
 // ====================================================================================
 // 1. PENGATURAN PIN HARDWARE (BEBAS KONFLIK ESP32-S3 CAM)
@@ -51,18 +52,29 @@ HardwareSerial LoRaSerial(1);      // Menggunakan UART1 ESP32-S3
 // FRAMESIZE_QVGA (320x240, ~7-10 KB, sangat cepat) atau FRAMESIZE_VGA (640x480, detail)
 #define CAMERA_FRAME_SIZE FRAMESIZE_VGA
 
+// ====================================================================================
+// 0. IDENTITAS NODE TRANSMITTER (MULTI-NODE SUPPORT)
+// ====================================================================================
+// Beri nama unik untuk setiap node perangkap:
+// - Alat 1: "NODE_01"
+// - Alat 2: "NODE_02"
+#define NODE_ID                 "NODE_01"
+
 // --- PENGATURAN JADWAL OPERASIONAL ---
 // Interval bangun per siklus untuk mengecek jadwal kipas & kirim sensor:
 // - Mode Lab / Pengujian: 30 detik (30ULL)
 // - Mode Kebun          : 1800 detik (30 menit) atau 3600 detik (1 jam)
 const uint64_t WAKEUP_INTERVAL_SECONDS = 30; // Ubah ke 1800 (30 menit) saat di kebun
 
-// Jam pengambilan foto harian (0 - 23). Contoh: 8 = Pukul 08:00 pagi
-#define PHOTO_TARGET_HOUR 8
+// Jadwal Pengambilan Foto Harian (Pencegahan Tabrakan / Anti-Collision):
+// Node 01: Pukul 08:00 (PHOTO_TARGET_HOUR 8, PHOTO_TARGET_MINUTE 0)
+// Node 02: Pukul 08:05 (PHOTO_TARGET_HOUR 8, PHOTO_TARGET_MINUTE 5) -> Selisih 5 menit
+#define PHOTO_TARGET_HOUR       8
+#define PHOTO_TARGET_MINUTE     0
 
 // Set true jika foto hanya dikirim 1x sehari saat jam target.
 // Set false jika ingin foto dikirim SETIAP KALI alat bangun (sangat berguna untuk tes di lab).
-#define SEND_PHOTO_ONCE_DAILY false
+#define SEND_PHOTO_ONCE_DAILY   false
 
 // Variabel memori RTC (Tersimpan aman saat Deep Sleep)
 RTC_DATA_ATTR int lastPhotoDay = -1;
@@ -180,9 +192,20 @@ void setup() {
   bool rtcOk = rtc.begin();
   if (rtcOk) {
     Serial.println("[OK] RTC DS3231 terdeteksi.");
-    if (rtc.lostPower()) {
-      Serial.println("[WARNING] RTC kehilangan daya, menyetel ke waktu kompilasi...");
+    
+    // SINKRONISASI WAKTU KE JAM SEKARANG:
+    // Hanya disinkronkan saat baru upload / tombol Reset ditekan (ESP_SLEEP_WAKEUP_UNDEFINED).
+    // Jam TIDAK AKAN di-reset saat bangun rutin dari Deep Sleep.
+    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
+      // Otomatis mengambil jam & tanggal saat tombol Upload Arduino IDE ditekan di PC
       rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+      
+      // Catatan: Jika ingin menyetel waktu manual tertentu secara spesifik, hilangkan tanda komentar di bawah:
+      // rtc.adjust(DateTime(2026, 9, 11, 11, 30, 0)); // Format: (Tahun, Bulan, Tanggal, Jam, Menit, Detik)
+      
+      Serial.println("[OK] Waktu RTC DS3231 berhasil disinkronkan ke waktu sekarang!");
+    } else {
+      Serial.println("[OK] Melanjutkan waktu dari RTC DS3231 (bangun dari Deep Sleep).");
     }
   } else {
     Serial.println("[ERROR] RTC DS3231 TIDAK DITEMUKAN! Periksa pin SDA(2) & SCL(3).");
@@ -191,7 +214,7 @@ void setup() {
   // ----------------------------------------------------------------------------------
   // LANGKAH 1: BACA SENSOR & EVALUASI JADWAL KIPAS DARI RTC
   // ----------------------------------------------------------------------------------
-  DateTime now = (rtcOk) ? rtc.now() : DateTime(2026, 9, 10, 10, 0, 0);
+  DateTime now = (rtcOk) ? rtc.now() : DateTime(2026, 9, 11, 11, 30, 0);
   float suhu = dht.readTemperature();
   float kelembaban = dht.readHumidity();
 
@@ -218,15 +241,16 @@ void setup() {
   // Kunci status pin kipas agar tetap HIDUP/MATI selama Deep Sleep
   gpio_hold_en((gpio_num_t)FAN_PIN);
 
-  // Format string data sensor
-  char sensorData[160];
+  // Format string data sensor (Multi-Node Support)
+  char sensorData[180];
   snprintf(sensorData, sizeof(sensorData), 
-           "[DATA] Waktu: %04d-%02d-%02d %02d:%02d:%02d, Suhu: %.1f C, Kelembaban: %.1f %%, Kipas: %s",
+           "[DATA] Node: %s, Waktu: %04d-%02d-%02d %02d:%02d:%02d, Suhu: %.1f C, Kelembaban: %.1f %%, Kipas: %s",
+           NODE_ID,
            now.year(), now.month(), now.day(),
            now.hour(), now.minute(), now.second(),
            suhu, kelembaban, fanShouldBeOn ? "ON" : "OFF");
 
-  Serial.printf("\n[SISTEM] Data Siap Kirim -> %s\n", sensorData);
+  Serial.printf("\n[SISTEM] Data Siap Kirim (%s) -> %s\n", NODE_ID, sensorData);
 
   // Kirim data sensor via LoRa
   LoRaSerial.println(sensorData);
@@ -241,14 +265,14 @@ void setup() {
     // Mode Pengujian: Ambil foto setiap bangun
     takePhoto = true;
   } else {
-    // Mode Kebun: Ambil foto 1x sehari pada jam target (misal jam 8 pagi)
-    if (now.hour() >= PHOTO_TARGET_HOUR && lastPhotoDay != now.day()) {
+    // Mode Kebun: Ambil foto 1x sehari pada jam & menit target node
+    if (now.hour() == PHOTO_TARGET_HOUR && now.minute() >= PHOTO_TARGET_MINUTE && lastPhotoDay != now.day()) {
       takePhoto = true;
     }
   }
 
   if (takePhoto) {
-    Serial.println("\n[SISTEM] Memulai proses pengambilan foto harian...");
+    Serial.printf("\n[SISTEM] Memulai proses pengambilan foto harian (%s)...\n", NODE_ID);
 
     // Inisialisasi Kamera OV3660
     if (initCamera()) {
@@ -268,8 +292,8 @@ void setup() {
       } else {
         Serial.printf("[OK] Foto berhasil diambil! Ukuran buffer: %u bytes\n", fb->len);
 
-        // Header transmisi gambar (persis seperti versi lama yang terbukti sukses)
-        LoRaSerial.println("---START---");
+        // Header transmisi gambar dengan identitas Node (Multi-Node Compatible)
+        LoRaSerial.printf("---START:%s---\n", NODE_ID);
         LoRaSerial.println(fb->len);
         delay(100);
 
@@ -284,15 +308,15 @@ void setup() {
           sentBytes += currentChunk;
 
           if (sentBytes % 1500 == 0 || sentBytes == totalBytes) {
-            Serial.printf("[LORA] Terkirim: %u / %u bytes (%.1f%%)\n", 
-                          sentBytes, totalBytes, (float)sentBytes / totalBytes * 100.0);
+            Serial.printf("[LORA %s] Terkirim: %u / %u bytes (%.1f%%)\n", 
+                          NODE_ID, sentBytes, totalBytes, (float)sentBytes / totalBytes * 100.0);
           }
           delay(40); // Jeda 40ms per paket agar buffer LoRa E220 stabil
         }
 
         delay(150);
-        LoRaSerial.print("\n---END---\n");
-        Serial.println("[OK] Seluruh data gambar berhasil dikirimkan via LoRa.");
+        LoRaSerial.printf("\n---END:%s---\n", NODE_ID);
+        Serial.printf("[OK] Seluruh data gambar (%s) berhasil dikirimkan via LoRa.\n", NODE_ID);
 
         esp_camera_fb_return(fb);
 
