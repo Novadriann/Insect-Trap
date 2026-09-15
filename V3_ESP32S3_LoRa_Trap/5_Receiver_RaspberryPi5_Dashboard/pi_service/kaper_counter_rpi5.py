@@ -46,6 +46,8 @@ class RaspberryPiKaperCounter:
         self.config_path = config_path
         self.config = self.load_config()
         self.yolo_model = None
+        self.yolo_dnn = None
+        self.yolo_backend = None
         self.yolo_model_path = yolo_model_path
 
         # Cari model otomatis jika path tidak ditentukan
@@ -62,12 +64,21 @@ class RaspberryPiKaperCounter:
                     break
 
         if self.yolo_model_path and os.path.exists(self.yolo_model_path):
+            # Coba 1: Ultralytics jika library terinstall
             try:
                 from ultralytics import YOLO
                 self.yolo_model = YOLO(self.yolo_model_path)
-                print(f"[RPi5 COUNTER] Model YOLO aktif: {self.yolo_model_path}")
-            except Exception as e:
-                print(f"[RPi5 COUNTER] YOLO tidak aktif ({e}), fallback ke engine OpenCV.")
+                self.yolo_backend = "ultralytics"
+                print(f"[RPi5 COUNTER] Model YOLO aktif via Ultralytics: {self.yolo_model_path}")
+            except Exception:
+                # Coba 2: OpenCV DNN (Native, sangat cepat & ringan untuk RPi5 CPU, tanpa butuh PyTorch)
+                if self.yolo_model_path.endswith(".onnx"):
+                    try:
+                        self.yolo_dnn = cv2.dnn.readNetFromONNX(self.yolo_model_path)
+                        self.yolo_backend = "opencv_dnn"
+                        print(f"[RPi5 COUNTER] Model YOLO ONNX aktif via OpenCV DNN (Ringan & Cepat): {self.yolo_model_path}")
+                    except Exception as e_dnn:
+                        print(f"[RPi5 COUNTER] Gagal memuat ONNX via OpenCV DNN ({e_dnn}), fallback ke OpenCV klasik.")
 
     def load_config(self):
         """Memuat parameter kalibrasi dari kaper_config.json."""
@@ -101,8 +112,10 @@ class RaspberryPiKaperCounter:
         cfg = self.config
 
         # Jika model YOLO aktif, gunakan model deep learning
-        if self.yolo_model is not None:
+        if self.yolo_backend == "ultralytics":
             return self.process_image_yolo(img, image_path, output_annotated_path, node_id, t_start)
+        elif self.yolo_backend == "opencv_dnn":
+            return self.process_image_yolo_dnn(img, image_path, output_annotated_path, node_id, t_start)
 
         # 1. Konversi ke Grayscale & Ruang Warna LAB
         # Pada lem kuning, channel b* (Blue-Yellow) membedakan sayap putih/transparan dari latar kuning dengan tajam!
@@ -302,7 +315,109 @@ class RaspberryPiKaperCounter:
             "process_time_ms": round(proc_time_ms, 1),
             "insects": detected_insects,
             "annotated_image_path": output_annotated_path,
-            "method": "YOLO-DeepLearning"
+            "method": "YOLO-Ultralytics"
+        }
+
+    def process_image_yolo_dnn(self, img, image_path, output_annotated_path, node_id, t_start):
+        """Inferensi ONNX menggunakan OpenCV DNN (Sangat cepat, efisien, tanpa butuh PyTorch/Ultralytics)."""
+        h_orig, w_orig = img.shape[:2]
+
+        # 1. Preprocessing input YOLOv8 (640x640, float32 [0, 1], swap RB)
+        blob = cv2.dnn.blobFromImage(img, 1.0 / 255.0, (640, 640), swapRB=True, crop=False)
+        self.yolo_dnn.setInput(blob)
+        preds = self.yolo_dnn.forward()  # Shape: (1, 5, 8400) untuk 1 kelas
+
+        # 2. Reshape: squeeze batch -> transpose jadi (8400, 5)
+        preds = np.squeeze(preds, axis=0).T
+
+        x_factor = w_orig / 640.0
+        y_factor = h_orig / 640.0
+
+        boxes = []
+        confidences = []
+
+        # 3. Filter kandidat box dengan confidence threshold
+        conf_thresh = 0.35
+        for row in preds:
+            conf = float(row[4])
+            if conf >= conf_thresh:
+                cx, cy, w, h = float(row[0]), float(row[1]), float(row[2]), float(row[3])
+                x1 = int((cx - 0.5 * w) * x_factor)
+                y1 = int((cy - 0.5 * h) * y_factor)
+                bw = int(w * x_factor)
+                bh = int(h * y_factor)
+                boxes.append([x1, y1, bw, bh])
+                confidences.append(conf)
+
+        # 4. Non-Maximum Suppression (NMS) untuk membuang kotak ganda
+        indices = cv2.dnn.NMSBoxes(boxes, confidences, score_threshold=conf_thresh, nms_threshold=0.45)
+
+        annotated_img = img.copy()
+        detected_insects = []
+
+        if len(indices) > 0:
+            # Flatten jika array 2D
+            flat_indices = indices.flatten() if hasattr(indices, 'flatten') else [i[0] for i in indices]
+            for idx, i in enumerate(flat_indices, 1):
+                x, y, bw, bh = boxes[i]
+                conf = confidences[i]
+                x1, y1 = max(0, x), max(0, y)
+                x2, y2 = min(w_orig, x + bw), min(h_orig, y + bh)
+
+                detected_insects.append({
+                    "id": idx,
+                    "x": int(x1), "y": int(y1),
+                    "width": int(x2 - x1), "height": int(y2 - y1),
+                    "confidence": round(conf, 2)
+                })
+
+                # Gambar kotak pembatas Bounding Box & Label
+                box_color = (0, 255, 0)
+                cv2.rectangle(annotated_img, (x1, y1), (x2, y2), box_color, 2)
+                lbl_text = f"#{idx} Kaper {int(conf * 100)}%"
+                (tw, th), _ = cv2.getTextSize(lbl_text, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+                cv2.rectangle(annotated_img, (x1, max(0, y1 - th - 6)), (x1 + tw + 4, y1), box_color, -1)
+                cv2.putText(annotated_img, lbl_text, (x1 + 2, max(th + 2, y1 - 3)),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 0, 0), 1, cv2.LINE_AA)
+
+        total_count = len(detected_insects)
+
+        # Evaluasi Ambang Batas Ancaman Hama
+        if total_count < 5:
+            threat_level = "Aman"
+            status_color = (0, 200, 0)
+        elif total_count <= 15:
+            threat_level = "Waspada"
+            status_color = (0, 165, 255)
+        else:
+            threat_level = "Bahaya"
+            status_color = (0, 0, 255)
+
+        # Banner status di bagian atas gambar
+        overlay = annotated_img.copy()
+        cv2.rectangle(overlay, (0, 0), (w_orig, 40), (25, 25, 25), -1)
+        cv2.addWeighted(overlay, 0.75, annotated_img, 0.25, 0, annotated_img)
+
+        banner_text = f"[{node_id}] YOLO ONNX Kaper: {total_count} Ekor | Status: {threat_level}"
+        cv2.putText(annotated_img, banner_text, (10, 27),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, status_color, 2, cv2.LINE_AA)
+
+        if output_annotated_path:
+            out_dir = os.path.dirname(output_annotated_path)
+            if out_dir:
+                os.makedirs(out_dir, exist_ok=True)
+            cv2.imwrite(output_annotated_path, annotated_img)
+
+        proc_time_ms = (time.time() - t_start) * 1000.0
+
+        return {
+            "node_id": node_id,
+            "total_count": total_count,
+            "threat_level": threat_level,
+            "process_time_ms": round(proc_time_ms, 1),
+            "insects": detected_insects,
+            "annotated_image_path": output_annotated_path,
+            "method": "YOLOv8-OpenCV-DNN"
         }
 
 

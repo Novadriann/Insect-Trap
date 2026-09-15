@@ -88,24 +88,24 @@ def init_database():
 
 
 def find_serial_port(preferred_port=None):
-    """Mencari port serial ESP32 secara otomatis di Linux / Raspberry Pi / Windows."""
+    """Mencari port serial USB ESP32 secara otomatis di Linux / Raspberry Pi / Windows."""
     if preferred_port:
         return preferred_port
-
-    ports = serial.tools.list_ports.comports()
-    for p in ports:
-        p_name = p.device
-        desc = p.description.lower()
-        if "usb" in p_name.lower() or "acm" in p_name.lower() or "cp210" in desc or "ch340" in desc or "uart" in desc:
-            return p_name
 
     if os.path.exists("/dev/ttyUSB0"):
         return "/dev/ttyUSB0"
     if os.path.exists("/dev/ttyACM0"):
         return "/dev/ttyACM0"
 
-    if ports:
-        return ports[0].device
+    ports = serial.tools.list_ports.comports()
+    for p in ports:
+        p_name = p.device
+        # Jangan gunakan port UART internal Raspberry Pi (ttyAMA)
+        if "ttyama" in p_name.lower():
+            continue
+        desc = p.description.lower()
+        if "usb" in p_name.lower() or "acm" in p_name.lower() or "cp210" in desc or "ch340" in desc or "uart" in desc:
+            return p_name
 
     return None
 
@@ -309,11 +309,12 @@ def run_receiver(port=None, baudrate=115200):
                         print(f"[ERROR] Gagal memproses deteksi kupu kaper: {err}")
 
             except (serial.SerialException, OSError) as e:
-                print(f"[RECEIVER DAEMON] Koneksi serial terputus: {e}. Menghubungkan ulang...")
+                print(f"[RECEIVER DAEMON] Koneksi serial terputus: {e}. Menghubungkan ulang dalam 2 detik...")
                 try:
                     ser.close()
                 except Exception:
                     pass
+                time.sleep(2)
                 break
             except Exception:
                 pass
