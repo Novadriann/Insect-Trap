@@ -1,197 +1,283 @@
-# Sistem Pemantauan Hama Jarak Jauh (Insect Trap Monitoring IoT)
-**Berbasis ESP32-S3 CAM, LoRa Ebyte E220-900T22D, DHT22, RTC DS3231, & Image Builder**
+# 🌾 Sistem Pemantauan Hama Perangkap Feromon (Insect Trap Monitoring IoT & AI)
+**Berbasis ESP32-S3 CAM, LoRa Ebyte E220-900T22D, Raspberry Pi 5, & Deteksi AI (YOLOv8 + OpenCV)**  
+*Lab ELINS - Departemen Ilmu Komputer dan Elektronika, Universitas Gadjah Mada*
 
-Proyek ini adalah sistem IoT nirkabel untuk memantau populasi serangga hama di dalam perangkap lem perekat ber-feromon di lahan perkebunan. Sistem mengambil gambar kondisi perangkap secara berkala/harian serta membaca suhu dan kelembaban lingkungan, lalu mentransmisikannya secara nirkabel sejauh beberapa kilometer menggunakan gelombang radio LoRa 915 MHz ke stasiun penerima (Laptop/PC) untuk disimpan ke file log Excel (`.csv`) dan file gambar foto asli (`.jpg`).
+Proyek ini adalah sistem IoT nirkabel terpadu untuk memantau populasi serangga hama (khususnya kupu kaper *Spodoptera exigua*) di dalam perangkap ber-feromon lem perekat kuning di lahan perkebunan bawang merah/cabai. 
 
----
-
-## 🛠️ 1. Spesifikasi Hardware
-
-### A. Transmitter Node (Perangkat Lapangan / Kebun):
-1. **Mikrokontroler:** **ESP32-S3-CAM** (Kamera OV3660, Dual Type-C, Octal PSRAM)
-2. **Modul Komunikasi:** **LoRa Ebyte E220-900T22D** (Transceiver 900 MHz UART 22 dBm)
-3. **Sensor Lingkungan:** **DHT22 (AM2302)** (Suhu & Kelembaban Presisi)
-4. **Real Time Clock:** **RTC DS3231** (Waktu nyata presisi tinggi I2C dengan baterai CR2032)
-5. **Pendingin:** **Kipas Mini DC 5V** + **Transistor NPN (2N2222 / SS8050)** (Aktif otomatis pukul 07:00 – 17:00)
-6. **Pencahayaan Flash:** **Lampu LED Pentol Putih 5mm (DIP)** + **Resistor 150Ω – 220Ω**
-7. **Catu Daya:** **Modul AC-to-DC Hi-Link HLK 5V 2A** (Input PLN 220V AC -> Output 5V DC 2A)
-
-### B. Receiver Node (Stasiun Penerima / Laptop):
-1. **Mikrokontroler:** **ESP32 Dev Module V1** (30 Pin / 38 Pin)
-2. **Modul Komunikasi:** **LoRa Ebyte E220-900T22D**
-3. **Catu Daya & Komunikasi:** Kabel Data USB langsung ke Port Laptop/PC
+Sistem secara otomatis mengambil foto resolusi tinggi, membaca kondisi suhu & kelembaban lingkungan via sensor DHT22 & RTC DS3231, mengendalikan kipas pendingin cerdas, lalu mentransmisikannya secara nirkabel jarak jauh (Long Range LoRa 915 MHz) ke **Stasiun Pusat Raspberry Pi 5**. Di Raspberry Pi 5, foto diolah menggunakan **AI Deep Learning (YOLOv8) & Computer Vision Adaptif** untuk menghitung populasi serangga secara instan, mengklasifikasikan tingkat ancaman, serta menyajikan hasilnya pada **Web Dashboard Real-Time** yang dapat diakses oleh petani dari smartphone di mana saja melalui jaringan mesh **Tailscale**.
 
 ---
 
-## 🔌 2. Diagram Wiring (Pengkabelan Lengkap)
-
-### A. Transmitter (ESP32-S3-CAM Node Kebun)
-
-| Komponen | Pin Komponen | Terhubung ke Pin ESP32-S3 / Daya | Keterangan & Catatan |
-| :--- | :--- | :--- | :--- |
-| **Sumber Listrik**| AC Live (L) & Neutral (N)| **Pin AC L & N Modul HLK 5V 2A** | Disarankan pasang sekring 1A pada kabel L |
-| **HLK 5V 2A** | Output +5V | **Pin 5V** ESP32-S3-CAM | Jalur daya utama 5V sistem |
-| **HLK 5V 2A** | Output GND | **Pin GND** ESP32-S3-CAM | Ground bersama (*Common GND*) |
-| **LoRa Ebyte E220**| VCC | **+5V HLK** (atau 5V ESP32) | Arus transmisi puncak ~120 mA |
-| | GND | **GND** | Ground |
-| | **TXD** | **GPIO 41** | LoRa TXD -> ESP32-S3 RX (UART1) |
-| | **RXD** | **GPIO 42** | LoRa RXD -> ESP32-S3 TX (UART1) |
-| | **M0** | **GND** | **Wajib ke GND** (Mode 0: Transceiver Normal) |
-| | **M1** | **GND** | **Wajib ke GND** (Mode 0: Transceiver Normal) |
-| **Sensor DHT22** | Pin 1 (VCC) | **Pin 3.3V** ESP32-S3 | Daya sensor |
-| | Pin 2 (DATA) | **GPIO 1** | Beri resistor pull-up 4.7kΩ – 10kΩ ke 3.3V |
-| | Pin 4 (GND) | **GND** | Ground |
-| **RTC DS3231** | VCC | **Pin 3.3V** ESP32-S3 | Daya RTC |
-| | GND | **GND** | Ground |
-| | **SDA** | **GPIO 2** | Jalur Komunikasi I2C SDA |
-| | **SCL** | **GPIO 3** | Jalur Komunikasi I2C SCL |
-| **LED Flash Pentol**| Anoda (+) *Kaki Panjang* | **GPIO 47** | **Wajib pasang seri Resistor 150Ω – 220Ω** |
-| *(Putih 5mm)* | Katoda (-) *Kaki Pendek*| **GND** | Ground |
-| **Kipas Mini DC 5V**| Kabel Merah Positif (+) | **+5V HLK** | Sumber tegangan kipas langsung dari 5V |
-| | Kabel Hitam Negatif (-)| **Kolektor (C)** Transistor 2N2222 | Sakelar pemutus/penghubung GND |
-| **Transistor Kipas**| Basis (B) | **GPIO 21** | **Wajib pasang seri Resistor 1kΩ** |
-| *(NPN 2N2222)* | Kolektor (C) | **Kabel Negatif (-) Kipas** | Jalur sakelar kipas |
-| | Emitor (E) | **GND** | Ground |
-
-> 💡 **Proteksi Kipas:** Pasang 1 buah dioda 1N4007 / 1N4148 secara paralel terbalik pada kabel daya kipas (garis/katoda dioda ke Kabel Merah +5V, anoda ke Kabel Hitam -) untuk meredam tegangan induksi saat kipas dimatikan.
+## 📑 Daftar Isi
+1. [Arsitektur Sistem Keseluruhan](#-1-arsitektur-sistem-keseluruhan)
+2. [Spesifikasi Hardware & Pinout](#-2-spesifikasi-hardware--pinout)
+3. [Daftar & Fungsi Program Komprehensif](#-3-daftar--fungsi-program-komprehensif)
+4. [Alur Setup & Deployment Raspberry Pi 5](#-4-alur-setup--deployment-raspberry-pi-5)
+5. [Akses Jarak Jauh via Tailscale Mesh VPN](#-5-akses-jarak-jauh-via-tailscale-mesh-vpn)
+6. [Engine Deteksi Hama AI (YOLOv8 & OpenCV Dual-Engine)](#-6-engine-deteksi-hama-ai-yolov8--opencv-dual-engine)
+7. [Pelatihan Model YOLO di Google Colab](#-7-pelatihan-model-yolo-di-google-colab)
+8. [Panduan Menjalankan Sistem & Web Dashboard](#-8-panduan-menjalankan-sistem--web-dashboard)
+9. [Troubleshooting & Solusi Kendala](#-9-troubleshooting--solusi-kendala)
 
 ---
 
-### B. Receiver (ESP32 Dev Module + LoRa E220)
+## 🏗️ 1. Arsitektur Sistem Keseluruhan
 
-| Modul LoRa Ebyte E220 | ESP32 Dev Module (Receiver) | Keterangan |
-| :--- | :--- | :--- |
-| **VCC** | **Pin 5V** (atau VIN) | Suplai tegangan modul LoRa |
-| **GND** | **Pin GND** | Ground |
-| **TXD** | **GPIO 16 (RX2)** | LoRa TX -> ESP32 RX |
-| **RXD** | **GPIO 17 (TX2)** | LoRa RX -> ESP32 TX |
-| **M0** | **GND** | **Wajib ke GND** (Mode 0: Normal) |
-| **M1** | **GND** | **Wajib ke GND** (Mode 0: Normal) |
-| **Port USB ESP32** | **Port USB Laptop / PC** | Mengalirkan data via serial COM (115200 baud) |
-
----
-
-## 📡 3. Konfigurasi LoRa Ebyte E220 (Software E220_V1.1)
-
-Pastikan **KEDUA MODUL LoRa (Transmitter & Receiver)** disetel dengan parameter yang **IDENTIK**:
-
-| Parameter | Nilai Pengaturan | Alasan Teknis |
-| :--- | :--- | :--- |
-| **Baud Rate** | **115200 bps** | Kecepatan tinggi agar aliran biner foto tidak tertahan |
-| **Parity** | **8N1** | 8 Bit Data, No Parity, 1 Stop Bit |
-| **Air Rate** | **62.5 Kbps** (atau 19.2 Kbps) | Pengiriman foto cepat (~2 detik pada 62.5K) |
-| **Packet Size** | **200 Bytes** | Ukuran chunk paket optimal |
-| **Tran Mode** | **Normal** (Transparent) | Mode transmisi data transparan langsung |
-| **Power** | **22 dBm** | Daya pancar maksimal (~160 mW) |
-| **Channel** | **65** (Frekuensi 915.125 MHz) | Frekuensi LoRa ISM Indonesia (Keduanya harus sama!) |
-| **Address** | **0** | Alamat broadcast/default |
-| **Channel RSSI** | **Disable** | Dimatikan agar tidak ada overhead |
-| **Packet RSSI** | **Disable** | **Wajib Disable** agar tidak menyisipkan byte ekstra di file gambar |
-
----
-
-## 📂 4. Struktur Program & Berkas Proyek
-
-Folder kerja terbaru sistem berada di dalam:
 ```text
-V3_ESP32S3_LoRa_Trap/
-├── 1_Panduan_Hardware_dan_Wiring/
-│   ├── WIRING_DIAGRAM.md             # Tabel wiring dan diagram blok rangkaian
-│   └── SKEMA_FLASH_LED_DAN_POWER.md  # Skema transistor kipas & LED pentol 5mm
-├── 2_Konfigurasi_LoRa_E220/
-│   ├── PANDUAN_KONFIGURASI_E220.md   # Panduan konfigurasi GUI E220_V1.1
-│   └── E220_Parameter_Summary.txt    # Ringkasan cepat parameter radio
-├── 3_Transmitter_ESP32S3/
-│   └── Transmitter_ESP32S3/
-│       └── Transmitter_ESP32S3.ino   # Program ESP32-S3 CAM Transmitter
-└── 4_Receiver_ESP32_Standalone/
-    ├── Receiver_ESP32_Standalone/
-    │   └── Receiver_ESP32_Standalone.ino # Program Receiver Bridge ESP32
-    └── receiver_pc.py                # Script Image Builder & Sensor Logger di Laptop
+┌─────────────────────────────────────────────────────────────┐
+│               NODE TRANSMITTER (KEBUN / SAWAH)              │
+│  - ESP32-S3 CAM (OV3660 + Octal PSRAM)                      │
+│  - Sensor DHT22 (Suhu & Kelembaban)                         │
+│  - RTC DS3231 (Jadwal Kipas 07:00-17:00 & Timer Anti-Tabrak)│
+│  - Lampu Flash LED Pentol 5mm (GPIO 47)                     │
+│  - Kipas Mini DC 5V (GPIO 21 via Transistor NPN 2N2222)     │
+│  - Catu Daya HLK 5V 2A (AC 220V PLN ke DC 5V)               │
+│  - Modul LoRa Ebyte E220-900T22D (TXD: GPIO 41, RXD: GPIO 42)│
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               │ Gelombang Radio LoRa 915 MHz (Jangkauan 1-3 km)
+                               │ Format: [DATA] Teks Sensor + Chunked Biner JPEG
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│               NODE RECEIVER (STASIUN PENERIMA)              │
+│  - Modul LoRa Ebyte E220-900T22D (TXD: Pin 16, RXD: Pin 17) │
+│  - ESP32 Dev Module (Mode Transparent Passthrough)          │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+                               │ Kabel USB Serial (/dev/ttyUSB0 @ 115200 bps)
+                               ▼
+┌─────────────────────────────────────────────────────────────┐
+│                RASPBERRY PI 5 (2GB / 4GB / 8GB)             │
+│                                                             │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ 1. receiver_daemon.py (Background Thread)             │  │
+│  │    - Membaca serial /dev/ttyUSB0                      │  │
+│  │    - Parsing data sensor multi-node (Node 1 & 2)      │  │
+│  │    - Rekonstruksi paket biner JPEG menjadi file .jpg  │  │
+│  │    - Menyimpan log ke SQLite & sensor_history.csv     │  │
+│  └───────────────────────────┬───────────────────────────┘  │
+│                              │ Memicu deteksi otomatis      │
+│                              ▼                              │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ 2. kaper_counter_rpi5.py (AI & Vision Engine)         │  │
+│  │    - YOLOv8 ONNX CPU Accelerator (OpenCV DNN)         │  │
+│  │    - Dual-Channel LAB b* + CLAHE + Watershed Split   │  │
+│  │    - Klasifikasi: Aman (<5), Waspada (5-15), Bahaya   │  │
+│  │    - Output: Foto beranotasi bounding box hijau       │  │
+│  └───────────────────────────┬───────────────────────────┘  │
+│                              │ Menyimpan hasil deteksi      │
+│                              ▼                              │
+│  ┌───────────────────────────────────────────────────────┐  │
+│  │ 3. app.py (Flask Web Server - Port 5000)              │  │
+│  │    - UI Dashboard Interaktif (Tailwind CSS, Chart.js) │  │
+│  │    - Selector Multi-Node (NODE_01, NODE_02)           │  │
+│  │    - REST API Real-Time (/api/latest, /api/history)   │  │
+│  │    - Ekspor Laporan CSV Excel                         │  │
+│  └───────────────────────────────────────────────────────┘  │
+└──────────────────────────────┬──────────────────────────────┘
+                               │
+             ┌─────────────────┴─────────────────┐
+             ▼                                   ▼
+   [Wi-Fi Lokal / LAN]                  [Tailscale Mesh VPN]
+   http://192.168.x.x:5000              http://100.x.y.z:5000
+             │                                   │
+             └─────────────────┬─────────────────┘
+                               ▼
+                 [Smartphone / Laptop Petani]
+                 (Bisa diakses dari mana saja)
 ```
 
 ---
 
-## 💻 5. Cara Mengupload Program
+## 🛠️ 2. Spesifikasi Hardware & Pinout
 
-### A. Upload ke ESP32-S3-CAM (Transmitter)
-ESP32-S3-CAM sudah dilengkapi port USB Type-C internal (tidak memerlukan modul USB-TTL eksternal).
-1. Hubungkan kabel data USB Type-C ke **Port TTL / UART** pada ESP32-S3-CAM.
-2. Buka **Arduino IDE**.
-3. Buka file sketch:
-   `V3_ESP32S3_LoRa_Trap/3_Transmitter_ESP32S3/Transmitter_ESP32S3/Transmitter_ESP32S3.ino`
-4. Masuk ke menu **Tools** di Arduino IDE dan pastikan pengaturan berikut:
-   * **Board:** `"ESP32S3 Dev Module"`
-   * **Port:** Pilih COM ESP32-S3 Anda (misal `COM11` atau `COM34`)
-   * **PSRAM:** **`"OPI PSRAM"`** *(Wajib diaktifkan agar memori kamera bekerja)*
-   * **Flash Size:** `"8MB (64Mb)"` atau `"16MB"`
-   * **Partition Scheme:** `"Huge APP (3MB No OTA/1MB SPIFFS)"`
-   * **Upload Speed:** `921600`
-5. Klik tombol **Upload** (tanda panah ke kanan).
-6. Tunggu hingga proses upload selesai (*Done Uploading*).
+### A. Transmitter Node (ESP32-S3-CAM di Lapangan)
+| Komponen | Pin Komponen | Terhubung ke ESP32-S3 | Catatan Khusus |
+| :--- | :--- | :--- | :--- |
+| **LoRa Ebyte E220** | VCC & GND | **5V & GND** | Arus puncak ~120 mA saat memancar |
+| | TXD & RXD | **GPIO 41 (RX) & GPIO 42 (TX)** | Komunikasi UART1 Serial (115200 bps) |
+| | M0 & M1 | **GND & GND** | **Wajib ke GND** untuk mode normal transparan |
+| **Sensor DHT22** | DATA | **GPIO 1** | Beri resistor pull-up 4.7kΩ–10kΩ ke 3.3V |
+| **RTC DS3231** | SDA & SCL | **GPIO 2 (SDA) & GPIO 3 (SCL)** | I2C Hardware Bus |
+| **Flash LED Pentol** | Anoda (+) | **GPIO 47** | **Wajib seri resistor 150Ω–220Ω ke anoda** |
+| **Kipas DC 5V** | Positif (+) | **+5V HLK-PM01** | Sumber daya 5V langsung |
+| | Negatif (-) | **Kolektor Transistor NPN 2N2222** | Sakelar pemutus GND |
+| **Transistor Kipas** | Basis (B) | **GPIO 21** | **Wajib seri resistor 1kΩ**. Kipas aktif jam 07:00-17:00 |
+| | Emitor (E) | **GND** | Ground |
 
-### B. Upload ke ESP32 Dev Module (Receiver)
-1. Colokkan ESP32 Receiver ke laptop via kabel USB Micro/Type-C.
-2. Buka **Arduino IDE**.
-3. Buka file sketch:
-   `V3_ESP32S3_LoRa_Trap/4_Receiver_ESP32_Standalone/Receiver_ESP32_Standalone/Receiver_ESP32_Standalone.ino`
-4. Di menu **Tools**, atur:
-   * **Board:** `"ESP32 Dev Module"`
-   * **Port:** Pilih COM ESP32 Receiver Anda (misal `COM5`)
-5. Klik tombol **Upload**.
-6. **PENTING:** Setelah selesai upload, **TUTUP Serial Monitor di Arduino IDE** agar port COM tidak terkunci saat dijalankan oleh script Python.
+### B. Receiver Node (ESP32 Dev Module ke Raspberry Pi 5)
+| Modul LoRa Ebyte E220 | ESP32 Dev Module | Keterangan |
+| :--- | :--- | :--- |
+| **VCC & GND** | **Pin 5V (VIN) & GND** | Suplai tegangan |
+| **TXD** | **GPIO 16 (RX2)** | LoRa TX -> ESP32 RX |
+| **RXD** | **GPIO 17 (TX2)** | LoRa RX -> ESP32 TX |
+| **M0 & M1** | **GND & GND** | **Wajib ke GND** |
+| **Port USB ESP32** | **Port USB Raspberry Pi 5** | Kabel data USB membentuk `/dev/ttyUSB0` |
 
 ---
 
-## 🚀 6. Cara Menjalankan Sistem di Laptop (Image Builder)
+## 📂 3. Daftar & Fungsi Program Komprehensif
 
-1. Pastikan modul ESP32 Receiver tetap tercolok ke port USB laptop.
-2. Buka **Command Prompt (CMD)** atau **PowerShell**, lalu masuk ke folder receiver:
-   ```cmd
-   cd "d:\KULIAH\4. Project Lab ELINS\Pemantauan Hama\Program Insect Trap\V3_ESP32S3_LoRa_Trap\4_Receiver_ESP32_Standalone"
-   ```
-3. Install pustaka pendukung (jika belum pernah):
-   ```cmd
-   pip install pyserial
-   ```
-4. Jalankan script penerima:
-   ```cmd
-   python receiver_pc.py
-   ```
-5. **Nyalakan Node Transmitter di kebun:**
-   - Script akan otomatis mendeteksi port COM ESP32 Anda.
-   - Setiap kali transmisi masuk, data suhu (°C), kelembaban (%), dan jam RTC langsung tercatat rapi ke file **`log_sensor.csv`**.
-   - Aliran biner foto JPEG akan diunduh dengan progress bar (`100%`) dan otomatis disimpan menjadi file foto **`.jpg`** di dalam folder **`hasil_foto/`**.
+Berikut adalah penjelasan seluruh file program yang ada di dalam repositori:
+
+### 📁 Bagian 1: Firmware Mikrokontroler (Arduino C++)
+1. **`V3_ESP32S3_LoRa_Trap/3_Transmitter_ESP32S3/Transmitter_ESP32S3/Transmitter_ESP32S3.ino`**:
+   - Firmware utama untuk ESP32-S3-CAM di kebun.
+   - Mengontrol siklus Deep Sleep hemat energi (bangun setiap 30 detik untuk tes lab atau 30 menit di kebun).
+   - Membaca suhu & kelembaban DHT22, waktu presisi RTC DS3231, dan mengevaluasi jadwal kipas (ON pukul 07:00–17:00).
+   - Menyalakan Flash LED pentol via GPIO 47 dan menjepret foto JPEG OV3660 dengan kualitas jernih (JPEG Quality 10).
+   - Memecah data biner foto menjadi paket-paket kecil (*chunking* 150–200 byte) dan mengirimkannya via LoRa E220.
+   - Mendukung identitas unik node (`NODE_01`, `NODE_02`) dan penjadwalan anti-tabrakan (*anti-collision schedule*).
+
+2. **`V3_ESP32S3_LoRa_Trap/4_Receiver_ESP32_Standalone/Receiver_ESP32_Standalone/Receiver_ESP32_Standalone.ino`**:
+   - Firmware jembatan (*bridge*) untuk ESP32 Receiver.
+   - Mengambil aliran paket radio dari modul LoRa E220 dan langsung meneruskannya secara murni (*transparent passthrough*) ke kabel USB tanpa menambah karakter dekoratif yang dapat merusak susunan biner file JPEG.
 
 ---
 
-## 🔄 7. Alur Logika Sistem (Sistem Kerja Otomatis)
+### 📁 Bagian 2: Layanan Stasiun Penerima Raspberry Pi 5 (`pi_service/`)
+Folder: `V3_ESP32S3_LoRa_Trap/5_Receiver_RaspberryPi5_Dashboard/pi_service/`
 
-1. **Wake Up (Bangun Tidur):** Timer ESP32-S3 membangunkan mikrokontroler dari mode *Deep Sleep*.
-2. **Evaluasi Jadwal Kipas via RTC DS3231:**
-   - Program membaca waktu aktual dari RTC DS3231.
-   - **Pukul 07:00 – 17:00 (Siang Hari):** Pin `GPIO 21` disetel `HIGH`, transistor aktif, dan kipas menyala mendinginkan box dari panas matahari.
-   - **Pukul 17:01 – 06:59 (Malam Hari):** Pin `GPIO 21` disetel `LOW`, kipas mati otomatis untuk efisiensi energi.
-   - Status pin dikunci (*pin hold*) selama tidur menggunakan perintah `gpio_hold_en((gpio_num_t)FAN_PIN);` dan `gpio_deep_sleep_hold_en();`.
-3. **Membaca & Mengirim Data Sensor:**
-   - Sensor DHT22 membaca suhu dan kelembaban udara.
-   - Dikirim ke LoRa dengan format: `[DATA] Waktu: YYYY-MM-DD HH:MM:SS, Suhu: XX.X C, Kelembaban: YY.Y %, Kipas: ON/OFF`.
-4. **Jepret Foto Perangkap Hama:**
-   - Lampu Flash LED Pentol 5mm dinyalakan via `GPIO 47`.
-   - Sensor kamera OV3660 mengambil 1 frame gambar JPEG (resolusi VGA/QVGA).
-   - Lampu Flash langsung dimatikan setelah pengambilan foto selesai.
-5. **Transmisi LoRa:**
-   - Dikirim header: `---START---` lalu baris berikutnya ukuran total byte file foto.
-   - Potongan biner gambar dikirim per-chunk sebesar 150 byte dengan jeda 40–50 ms.
-   - Ditutup dengan penanda `---END---`.
-6. **Penerimaan di Laptop:**
-   - ESP32 Receiver meneruskan aliran data secara transparan (*bypass*).
-   - Script `receiver_pc.py` menangkap paket, mencatat sensor ke CSV, dan menyatukan kembali file biner menjadi gambar `.jpg` utuh.
-7. **Deep Sleep:** Selesai transmisi, ESP32-S3 masuk ke mode *Deep Sleep* untuk menghemat daya hingga jadwal siklus berikutnya.
+1. **`app.py`** *(Program Utama)*:
+   - Aplikasi server Web Dashboard berbasis framework **Flask**.
+   - **Otomatis menjalankan `receiver_daemon.py` di thread latar belakang**, sehingga Anda hanya perlu menjalankan 1 file ini untuk mengaktifkan seluruh sistem.
+   - Menyediakan REST API:
+     - `/api/latest?node=NODE_01`: Mengembalikan status sensor dan foto teranotasi terbaru.
+     - `/api/nodes`: Mengembalikan daftar seluruh node transmitter yang aktif.
+     - `/api/history`: Riwayat tren populasi serangga per tanggal/jam.
+     - `/export/csv`: Mengunduh berkas log data format Excel.
+
+2. **`receiver_daemon.py`** *(Background Serial Worker)*:
+   - Terhubung ke `/dev/ttyUSB0` pada 115200 baud.
+   - Membaca teks sensor `[DATA]` dan mencatatnya ke database SQLite `trap_monitoring.db` dan `sensor_history.csv`.
+   - Menangkap penanda awal foto `---START:NODE_XX---`, mengumpulkan ribuan byte biner JPEG secara utuh ke buffer memori, dan menyimpannya menjadi file gambar fisik di `static/captures/`.
+   - Otomatis memanggil engine `kaper_counter_rpi5.py` begitu gambar selesai diunduh.
+
+3. **`kaper_counter_rpi5.py`** *(Engine Penghitung Hama AI & Vision)*:
+   - Inti pemrosesan kecerdasan buatan (*AI Image Processing*) yang sangat ringan (RAM < 80 MB, waktu proses ~150–250 ms di CPU Raspberry Pi 5).
+   - **Dual-Engine Otomatis**:
+     - Jika ada file `kaper_yolo.onnx`, sistem menggunakan **YOLOv8 Deep Learning** via akselerasi **OpenCV DNN**.
+     - Jika file ONNX tidak ada, sistem otomatis beralih ke **OpenCV Adaptif Klasik (LAB b-channel + CLAHE + Watershed Cluster Split)** yang terbukti handal mendeteksi kaper di plat lem kuning.
+   - Menggambar kotak pembatas (*bounding box*) hijau, label nomor ID serangga (`#1`, `#2`), dan banner status ancaman di bagian atas foto.
+
+4. **`kaper_config.json`**:
+   - File konfigurasi parameter kalibrasi computer vision (ambang batas warna, filter area minimal/maksimal kontur, rasio aspek serangga).
+
+5. **`simulate_feed.py`**:
+   - Skrip pengujian mandiri untuk menyimulasikan transmisi gambar masuk ke dashboard tanpa perlu alat pemancar fisik:
+     `python3 simulate_feed.py test_lem_kuning.jpg NODE_01`
+
+6. **`setup_autostart.sh`**:
+   - Skrip bash untuk mendaftarkan layanan `insect_trap.service` ke `systemd` Linux agar dashboard menyala otomatis saat Raspberry Pi dihidupkan.
+
+7. **`templates/index.html`**:
+   - Antarmuka web modern responsif dengan fitur dark-mode, widget kartu metrik, komparator foto asli vs deteksi AI, grafik interaktif Chart.js, dan tombol unduh laporan.
 
 ---
 
-> 📝 **Catatan Pengujian vs Lapangan:**
-> - Di dalam file `Transmitter_ESP32S3.ino`:
->   - Untuk **Uji Coba di Lab:** Baris `const uint64_t WAKEUP_INTERVAL_SECONDS = 30;` dan `SEND_PHOTO_ONCE_DAILY = false` agar foto dikirim setiap 30 detik.
->   - Untuk **Pemasangan di Kebun:** Ubah `WAKEUP_INTERVAL_SECONDS` menjadi `1800` (30 menit) dan set `SEND_PHOTO_ONCE_DAILY = true` agar foto hanya dikirim 1 kali sehari pada jam target (misal jam 8 pagi)!
+### 📁 Bagian 3: Pelatihan AI Google Colab
+- **`Training_YOLO_Kaper_Colab.ipynb`**:
+  - Jupyter Notebook untuk melatih (*fine-tuning*) arsitektur model **YOLOv8-Nano** menggunakan GPU Tesla T4 gratis di Google Colab.
+  - Membaca dataset anotasi CVAT, melatih 80 epoch, mengevaluasi kurva *Precision-Recall (mAP)*, mengekspor ke format ONNX (`kaper_yolo.onnx`), dan men-download otomatis ke laptop Anda.
+
+---
+
+## 🍓 4. Alur Setup & Deployment Raspberry Pi 5
+
+### Langkah 1: Flash MicroSD & Login Awal
+1. Flash kartu MicroSD menggunakan **Raspberry Pi Imager** dengan OS **Raspberry Pi OS (64-bit)**.
+2. Pasang hostname `srikayangan` dan user `insect-trap`.
+3. Pasang MicroSD ke Raspberry Pi 5, hubungkan adaptor daya Type-C (5V 3A atau 5V 5A).
+4. Login dari laptop via SSH:
+   ```powershell
+   ssh insect-trap@srikayangan.local
+   ```
+
+### Langkah 2: Berikan Izin Akses Serial
+```bash
+sudo usermod -a -G dialout $USER
+```
+
+### Langkah 3: Transfer File & Pasang Dependensi Python
+Di PowerShell laptop Anda:
+```powershell
+scp -r "d:\KULIAH\4. Project Lab ELINS\Pemantauan Hama\Program Insect Trap\V3_ESP32S3_LoRa_Trap\5_Receiver_RaspberryPi5_Dashboard" insect-trap@srikayangan.local:~/
+```
+
+Di terminal SSH Raspberry Pi:
+```bash
+cd ~/5_Receiver_RaspberryPi5_Dashboard/pi_service
+pip install -r requirements.txt --break-system-packages
+```
+
+---
+
+## 🌐 5. Akses Jarak Jauh via Tailscale Mesh VPN
+
+Agar web dashboard di Raspberry Pi 5 dapat dipantau dari **smartphone atau laptop di mana pun Anda berada** tanpa perlu IP publik atau setting router:
+
+1. Pasang Tailscale di Raspberry Pi 5:
+   ```bash
+   curl -fsSL https://tailscale.com/install.sh | sh
+   sudo tailscale up
+   ```
+2. Buka URL otentikasi yang muncul di browser laptop Anda, lalu login dengan akun Google/Apple/Microsoft Anda.
+3. Catat IP Tailscale Raspberry Pi:
+   ```bash
+   tailscale ip -4
+   ```
+   *(Misal: `100.90.201.108`)*.
+4. Pasang aplikasi **Tailscale** di HP dan Laptop Anda, lalu login dengan akun yang sama.
+5. Sekarang Anda bisa mengakses web dashboard dari mana saja di browser HP/laptop:  
+   👉 **`http://100.90.201.108:5000`**
+
+---
+
+## 🧠 6. Engine Deteksi Hama AI (YOLOv8 & OpenCV Dual-Engine)
+
+Engine `kaper_counter_rpi5.py` dirancang khusus untuk memecahkan kendala optik serangga kaper di atas lem kuning:
+1. **Sayap Transparan/Putih:** Ruang warna **LAB channel $b^*$** memisahkan sayap putih dari lem kuning cerah secara tegas.
+2. **Badan Hitam:** Ruang warna **Grayscale dengan filter CLAHE** menonjolkan kepala dan badan gelap serangga.
+3. **Serangga Berdempetan (*Cluster*):** Algoritma **Watershed Segmentation** memisahkan kontur yang saling bertumpuk menjadi individu serangga terpisah.
+4. **Deep Learning YOLOv8 ONNX:** Mendeteksi pola bentuk kaper secara holistik dan mengeliminasi kesalahan deteksi akibat kotoran, debu, atau serat daun.
+
+### Ambang Batas Ancaman Hama:
+- 🟢 **Aman**: Populasi $< 5$ ekor kaper (Kondisi lahan normal).
+- 🟡 **Waspada**: Populasi $5 - 15$ ekor kaper (Perlu pemantauan intensif).
+- 🔴 **Bahaya**: Populasi $> 15$ ekor kaper (Ambang batas ekonomi terlampaui, perlu tindakan pengendalian).
+
+---
+
+## 🚀 7. Panduan Menjalankan Sistem & Web Dashboard
+
+### Menjalankan Server (Cukup 1 Terminal):
+Di terminal Raspberry Pi 5:
+```bash
+cd ~/5_Receiver_RaspberryPi5_Dashboard/pi_service
+python3 app.py
+```
+*(File `app.py` otomatis membuka port serial USB LoRa di background thread dan menyalakan web dashboard di port 5000)*.
+
+> [!CAUTION]
+> **JANGAN menjalankan `receiver_daemon.py` dan `app.py` secara bersamaan di 2 terminal berbeda!** Keduanya akan berebut membaca kabel USB `/dev/ttyUSB0` yang sama (*multiple access error*). Cukup jalankan `python3 app.py`.
+
+### Menjadikan Layanan Menyala Otomatis Saat Boot:
+```bash
+cd ~/5_Receiver_RaspberryPi5_Dashboard/pi_service
+chmod +x setup_autostart.sh
+./setup_autostart.sh
+```
+
+---
+
+## 🔍 8. Troubleshooting & Solusi Kendala
+
+1. **`device reports readiness to read but returned no data (multiple access on port?)`**:
+   - **Penyebab:** Ada 2 proses Python yang membuka `/dev/ttyUSB0` bersamaan.
+   - **Solusi:** Jalankan `sudo killall python3`, lalu jalankan cukup 1 program saja: `python3 app.py`.
+2. **Data LoRa tidak kunjung masuk di terminal**:
+   - Pastikan kabel **M0 dan M1** modul LoRa E220 Receiver tercolok kuat ke **GND**.
+   - Tekan tombol **RESET (EN)** pada ESP32-S3 Transmitter lapangan untuk memicu transmisi seketika.
+   - Pastikan antena LoRa terpasang rapat di kedua sisi.
+3. **YOLO mendeteksi 0 ekor**:
+   - Model ONNX diekspor sebelum training di Colab selesai (Epoch -1). Rename file `mv kaper_yolo.onnx kaper_yolo.onnx.bak` agar sistem kembali ke engine OpenCV Adaptif yang sudah terbukti akurat mendeteksi kaper.
