@@ -336,8 +336,8 @@ class RaspberryPiKaperCounter:
         boxes = []
         confidences = []
 
-        # 3. Filter kandidat box dengan confidence threshold
-        conf_thresh = 0.35
+        # 3. Filter kandidat box dengan confidence threshold (bisa diatur via kaper_config.json)
+        conf_thresh = float(self.config.get("yolo_conf_thresh", 0.20))
         for row in preds:
             conf = float(row[4])
             if conf >= conf_thresh:

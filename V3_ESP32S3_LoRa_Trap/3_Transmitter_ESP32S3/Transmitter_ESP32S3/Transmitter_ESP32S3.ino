@@ -119,8 +119,14 @@ bool initCamera() {
   config.pin_pclk     = PCLK_GPIO_NUM;
   config.pin_vsync    = VSYNC_GPIO_NUM;
   config.pin_href     = HREF_GPIO_NUM;
-  config.pin_sscb_sda = SIOD_GPIO_NUM;
-  config.pin_sscb_scl = SIOC_GPIO_NUM;
+  // Kompatibilitas nama field antara ESP32 Arduino Library v2.x dan v3.x
+  #if defined(ARDUINO_ESP32S3_DEV) && ESP_ARDUINO_VERSION_MAJOR >= 3
+    config.pin_sccb_sda = SIOD_GPIO_NUM;  // Library v3.x (nama baru: sccb)
+    config.pin_sccb_scl = SIOC_GPIO_NUM;
+  #else
+    config.pin_sscb_sda = SIOD_GPIO_NUM;  // Library v2.x (nama lama: sscb)
+    config.pin_sscb_scl = SIOC_GPIO_NUM;
+  #endif
   config.pin_pwdn     = PWDN_GPIO_NUM;
   config.pin_reset    = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
@@ -129,7 +135,8 @@ bool initCamera() {
   config.frame_size   = CAMERA_FRAME_SIZE;
   config.jpeg_quality = 10;          // Kualitas JPEG (10 = jernih & tajam)
   config.fb_count     = 1;
-  config.fb_location  = CAMERA_FB_IN_PSRAM;
+  // Gunakan PSRAM jika tersedia, fallback ke DRAM agar tidak crash jika PSRAM belum aktif
+  config.fb_location  = psramFound() ? CAMERA_FB_IN_PSRAM : CAMERA_FB_IN_DRAM;
 
   esp_err_t err = esp_camera_init(&config);
   if (err != ESP_OK) {
@@ -137,16 +144,27 @@ bool initCamera() {
     return false;
   }
 
-  // Kalibrasi Sensor OV3660
+  // Kalibrasi Sensor OV3660 - Perbaikan warna hijau (Green Tint Fix)
   sensor_t *s = esp_camera_sensor_get();
   if (s != NULL) {
-    s->set_vflip(s, 1);        // Balik vertikal jika terbalik
-    s->set_hmirror(s, 0);      // Horizontal mirror
-    s->set_brightness(s, 1);   // Tingkatkan kecerahan
-    s->set_contrast(s, 1);     // Tingkatkan kontras agar serangga terlihat jelas
-    s->set_saturation(s, -1);  // Kurangi saturasi berlebih
-    s->set_special_effect(s, 0); // No effect
-    s->set_wb_mode(s, 0);      // Auto White Balance
+    s->set_vflip(s, 1);            // Balik vertikal jika terbalik
+    s->set_hmirror(s, 0);          // Horizontal mirror
+    s->set_brightness(s, 1);       // Tingkatkan kecerahan
+    s->set_contrast(s, 1);         // Tingkatkan kontras agar serangga terlihat jelas
+    s->set_saturation(s, 0);       // Saturasi normal (bukan -1 agar warna akurat)
+    s->set_special_effect(s, 0);   // No special effect
+    s->set_whitebal(s, 1);         // Aktifkan Auto White Balance
+    s->set_awb_gain(s, 1);         // Aktifkan AWB Gain Control
+    // KUNCI: Mode WB Sunny (1) cocok untuk pencahayaan LED putih indoor
+    // 0=Auto, 1=Sunny, 2=Cloudy, 3=Office (Fluorescent), 4=Home (Incandescent)
+    s->set_wb_mode(s, 1);          // Sunny Mode: tidak melenceng hijau
+    s->set_exposure_ctrl(s, 1);    // Aktifkan Auto Exposure Control
+    s->set_aec2(s, 1);             // Aktifkan AEC2 (Night Mode Auto Exposure)
+    s->set_gain_ctrl(s, 1);        // Aktifkan Auto Gain Control
+    s->set_bpc(s, 1);              // Bad Pixel Correction (mengurangi noise)
+    s->set_wpc(s, 1);              // White Pixel Correction
+    s->set_raw_gma(s, 1);          // Gamma Correction untuk warna lebih natural
+    s->set_lenc(s, 1);             // Lens Correction (meratakan pencahayaan sudut)
   }
   return true;
 }
@@ -194,18 +212,18 @@ void setup() {
     Serial.println("[OK] RTC DS3231 terdeteksi.");
     
     // SINKRONISASI WAKTU KE JAM SEKARANG:
-    // Hanya disinkronkan saat baru upload / tombol Reset ditekan (ESP_SLEEP_WAKEUP_UNDEFINED).
-    // Jam TIDAK AKAN di-reset saat bangun rutin dari Deep Sleep.
-    if (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
-      // Otomatis mengambil jam & tanggal saat tombol Upload Arduino IDE ditekan di PC
-      rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
-      
-      // Catatan: Jika ingin menyetel waktu manual tertentu secara spesifik, hilangkan tanda komentar di bawah:
-      // rtc.adjust(DateTime(2026, 9, 11, 11, 30, 0)); // Format: (Tahun, Bulan, Tanggal, Jam, Menit, Detik)
-      
-      Serial.println("[OK] Waktu RTC DS3231 berhasil disinkronkan ke waktu sekarang!");
+    // Otomatis sinkron jika waktu RTC lebih lampau dari waktu kompilasi atau baru upload/reset
+    DateTime compileTime = DateTime(F(__DATE__), F(__TIME__));
+    DateTime rtcCurrent = rtc.now();
+    
+    if (rtcCurrent < compileTime || esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_UNDEFINED) {
+      rtc.adjust(compileTime);
+      Serial.printf("[OK] Waktu RTC DS3231 disinkronkan ke: %04d-%02d-%02d %02d:%02d:%02d\n",
+                    compileTime.year(), compileTime.month(), compileTime.day(),
+                    compileTime.hour(), compileTime.minute(), compileTime.second());
     } else {
-      Serial.println("[OK] Melanjutkan waktu dari RTC DS3231 (bangun dari Deep Sleep).");
+      Serial.printf("[OK] Melanjutkan waktu dari RTC DS3231: %02d:%02d:%02d\n",
+                    rtcCurrent.hour(), rtcCurrent.minute(), rtcCurrent.second());
     }
   } else {
     Serial.println("[ERROR] RTC DS3231 TIDAK DITEMUKAN! Periksa pin SDA(2) & SCL(3).");
@@ -278,7 +296,18 @@ void setup() {
     if (initCamera()) {
       Serial.println("[SISTEM] Menyalakan Lampu Flash LED Pentol (GPIO 47)...");
       digitalWrite(FLASH_PIN, HIGH);
-      delay(400); // Jeda adaptasi exposure kamera
+
+      // === GREEN TINT FIX: Stabilisasi AWB sebelum foto asli ===
+      // Ambil & buang 2 frame dummy agar sensor stabil dulu
+      Serial.println("[KAMERA] Warming up AWB - mengambil 2 frame dummy...");
+      delay(500);
+      camera_fb_t *fb_dummy1 = esp_camera_fb_get();
+      if (fb_dummy1) esp_camera_fb_return(fb_dummy1);
+      delay(500);
+      camera_fb_t *fb_dummy2 = esp_camera_fb_get();
+      if (fb_dummy2) esp_camera_fb_return(fb_dummy2);
+      delay(500); // Total warm-up ~1500ms
+      // =========================================================
 
       Serial.println("[SISTEM] Mengambil gambar perangkap hama...");
       camera_fb_t *fb = esp_camera_fb_get();
