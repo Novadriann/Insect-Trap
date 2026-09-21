@@ -22,6 +22,7 @@
 #include "driver/rtc_io.h"
 #include "driver/gpio.h"
 #include "esp_sleep.h"
+#include <Preferences.h>
 
 // ====================================================================================
 // 1. PENGATURAN PIN HARDWARE (BEBAS KONFLIK ESP32-S3 CAM)
@@ -69,8 +70,10 @@ const uint64_t WAKEUP_INTERVAL_SECONDS = 30; // Ubah ke 1800 (30 menit) saat di 
 // Jadwal Pengambilan Foto Harian (Pencegahan Tabrakan / Anti-Collision):
 // Node 01: Pukul 08:00 (PHOTO_TARGET_HOUR 8, PHOTO_TARGET_MINUTE 0)
 // Node 02: Pukul 08:05 (PHOTO_TARGET_HOUR 8, PHOTO_TARGET_MINUTE 5) -> Selisih 5 menit
-#define PHOTO_TARGET_HOUR       8
-#define PHOTO_TARGET_MINUTE     0
+// Jadwal foto dinamis (bisa diubah dari dashboard via LoRa downlink)
+RTC_DATA_ATTR int photoTargetHour = 8;
+RTC_DATA_ATTR int photoTargetMinute = 0;
+RTC_DATA_ATTR bool forceCaptureNow = false;  // Flag jepret manual dari dashboard
 
 // Set true jika foto hanya dikirim 1x sehari saat jam target.
 // Set false jika ingin foto dikirim SETIAP KALI alat bangun (sangat berguna untuk tes di lab).
@@ -194,6 +197,14 @@ void setup() {
   LoRaSerial.begin(115200, SERIAL_8N1, LORA_RX_PIN, LORA_TX_PIN);
   Serial.println("[OK] Serial LoRa E220 baudrate 115200.");
 
+  // Muat jadwal foto dari NVS (Non-Volatile Storage) agar tetap tersimpan walau baterai dicabut
+  Preferences prefs;
+  prefs.begin("trapconf", true);  // Read-only mode
+  photoTargetHour = prefs.getInt("photoHour", photoTargetHour);
+  photoTargetMinute = prefs.getInt("photoMin", photoTargetMinute);
+  prefs.end();
+  Serial.printf("[OK] Jadwal foto dari NVS: %02d:%02d\n", photoTargetHour, photoTargetMinute);
+
   // Cek PSRAM
   if (psramFound()) {
     Serial.printf("[OK] PSRAM Terdeteksi: %d bytes bebas.\n", ESP.getFreePsram());
@@ -275,16 +286,100 @@ void setup() {
   delay(1200); // Jeda agar paket teks selesai ditransmisikan
 
   // ----------------------------------------------------------------------------------
+  // LANGKAH 1.5: RECEIVE WINDOW - MENDENGAR PERINTAH DOWNLINK (2 DETIK)
+  // ----------------------------------------------------------------------------------
+  // Mirip LoRaWAN Class A: buka jendela dengar selama 2 detik setelah uplink
+  Serial.println("\n[DOWNLINK] Membuka Receive Window (2 detik)...");
+  unsigned long rxWindowStart = millis();
+  String rxBuffer = "";
+
+  while (millis() - rxWindowStart < 2000) {
+    if (LoRaSerial.available()) {
+      char c = (char)LoRaSerial.read();
+      rxBuffer += c;
+      if (c == '\n') {
+        rxBuffer.trim();
+        if (rxBuffer.startsWith("CMD,")) {
+          Serial.printf("[DOWNLINK] Perintah diterima: %s\n", rxBuffer.c_str());
+
+          // Parse: CMD,NODE_XX,SNAP atau CMD,NODE_XX,SCHEDULE,HH,MM
+          // Validasi Node ID
+          int firstComma = rxBuffer.indexOf(',');
+          int secondComma = rxBuffer.indexOf(',', firstComma + 1);
+          if (secondComma > 0) {
+            String cmdNodeId = rxBuffer.substring(firstComma + 1, secondComma);
+            if (cmdNodeId == NODE_ID) {
+              String cmdType = "";
+              int thirdComma = rxBuffer.indexOf(',', secondComma + 1);
+              if (thirdComma < 0) {
+                cmdType = rxBuffer.substring(secondComma + 1);
+              } else {
+                cmdType = rxBuffer.substring(secondComma + 1, thirdComma);
+              }
+              cmdType.trim();
+
+              if (cmdType == "SNAP") {
+                // === PERINTAH JEPRET MANUAL ===
+                forceCaptureNow = true;
+                Serial.println("[DOWNLINK] >> PERINTAH JEPRET MANUAL DITERIMA!");
+                // Kirim ACK konfirmasi
+                LoRaSerial.printf("ACK,%s,SNAP,OK\n", NODE_ID);
+                delay(100);
+              }
+              else if (cmdType == "SCHEDULE" && thirdComma > 0) {
+                // === PERINTAH UBAH JADWAL: CMD,NODE_XX,SCHEDULE,HH,MM ===
+                int fourthComma = rxBuffer.indexOf(',', thirdComma + 1);
+                if (fourthComma > 0) {
+                  int newHour = rxBuffer.substring(thirdComma + 1, fourthComma).toInt();
+                  int newMinute = rxBuffer.substring(fourthComma + 1).toInt();
+
+                  if (newHour >= 0 && newHour <= 23 && newMinute >= 0 && newMinute <= 59) {
+                    photoTargetHour = newHour;
+                    photoTargetMinute = newMinute;
+
+                    // Simpan ke NVS agar persisten
+                    Preferences prefs;
+                    prefs.begin("trapconf", false);  // Read-write mode
+                    prefs.putInt("photoHour", photoTargetHour);
+                    prefs.putInt("photoMin", photoTargetMinute);
+                    prefs.end();
+
+                    Serial.printf("[DOWNLINK] >> JADWAL DIUBAH KE %02d:%02d & DISIMPAN KE NVS!\n", photoTargetHour, photoTargetMinute);
+                    // Kirim ACK konfirmasi
+                    LoRaSerial.printf("ACK,%s,SCHEDULE,%02d,%02d,OK\n", NODE_ID, photoTargetHour, photoTargetMinute);
+                    delay(100);
+                  } else {
+                    Serial.println("[DOWNLINK] Jam/menit tidak valid, perintah diabaikan.");
+                  }
+                }
+              }
+            } else {
+              Serial.printf("[DOWNLINK] Perintah bukan untuk node ini (target: %s)\n", cmdNodeId.c_str());
+            }
+          }
+        }
+        rxBuffer = ""; // Reset buffer untuk perintah berikutnya
+      }
+    }
+  }
+  Serial.println("[DOWNLINK] Receive Window ditutup.");
+
+  // ----------------------------------------------------------------------------------
   // LANGKAH 2: CEK JADWAL PENGAMBILAN & PENGIRIMAN FOTO
   // ----------------------------------------------------------------------------------
   bool takePhoto = false;
 
-  if (!SEND_PHOTO_ONCE_DAILY) {
+  // Cek apakah ada perintah jepret manual dari dashboard
+  if (forceCaptureNow) {
+    takePhoto = true;
+    forceCaptureNow = false;  // Reset flag setelah dieksekusi
+    Serial.println("[FOTO] Mengambil foto karena PERINTAH JEPRET MANUAL dari Dashboard!");
+  } else if (!SEND_PHOTO_ONCE_DAILY) {
     // Mode Pengujian: Ambil foto setiap bangun
     takePhoto = true;
   } else {
-    // Mode Kebun: Ambil foto 1x sehari pada jam & menit target node
-    if (now.hour() == PHOTO_TARGET_HOUR && now.minute() >= PHOTO_TARGET_MINUTE && lastPhotoDay != now.day()) {
+    // Mode Kebun: Ambil foto 1x sehari pada jam & menit target node (dinamis)
+    if (now.hour() == photoTargetHour && now.minute() >= photoTargetMinute && lastPhotoDay != now.day()) {
       takePhoto = true;
     }
   }
@@ -356,8 +451,8 @@ void setup() {
       Serial.println("[ERROR] Inisialisasi kamera gagal.");
     }
   } else {
-    Serial.printf("[INFO] Jadwal foto hari ini sudah selesai atau belum waktunya (Target Jam: %d, Terakhir: Hari ke-%d).\n", 
-                  PHOTO_TARGET_HOUR, lastPhotoDay);
+    Serial.printf("[INFO] Jadwal foto hari ini sudah selesai atau belum waktunya (Target Jam: %02d:%02d, Terakhir: Hari ke-%d).\n", 
+                  photoTargetHour, photoTargetMinute, lastPhotoDay);
   }
 
   // ----------------------------------------------------------------------------------

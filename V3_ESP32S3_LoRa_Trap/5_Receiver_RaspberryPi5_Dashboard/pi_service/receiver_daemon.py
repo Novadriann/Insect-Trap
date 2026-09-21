@@ -77,6 +77,20 @@ def init_database():
     except Exception:
         pass
 
+    # Tabel antrean perintah downlink (Kontrol 2 Arah)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS pending_commands (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp_created TEXT,
+        node_id TEXT,
+        command_type TEXT,
+        command_payload TEXT,
+        command_str TEXT,
+        executed INTEGER DEFAULT 0,
+        executed_at TEXT
+    )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -214,6 +228,33 @@ def run_receiver(port=None, baudrate=115200):
                         writer.writerow([now_pc, node_id, waktu_rtc, suhu, kelembaban])
 
                     print(f"[OK] Sensor [{node_id}] tersimpan: Suhu={suhu}°C, RH={kelembaban}%, Waktu={waktu_rtc}")
+
+                    # === DOWNLINK: Kirim perintah tertunda ke node dalam Receive Window ===
+                    try:
+                        conn_cmd = sqlite3.connect(DB_PATH)
+                        c_cmd = conn_cmd.cursor()
+                        c_cmd.execute("""
+                        SELECT id, command_str FROM pending_commands 
+                        WHERE node_id = ? AND executed = 0 
+                        ORDER BY id ASC LIMIT 1
+                        """, (node_id,))
+                        pending = c_cmd.fetchone()
+
+                        if pending:
+                            cmd_id, cmd_str = pending
+                            print(f"[DOWNLINK] Mengirim perintah ke [{node_id}]: {cmd_str}")
+                            ser.write((cmd_str + "\n").encode('utf-8'))
+                            ser.flush()
+
+                            # Tandai perintah sebagai terkirim
+                            c_cmd.execute("""
+                            UPDATE pending_commands SET executed = 1, executed_at = ? WHERE id = ?
+                            """, (time.strftime("%Y-%m-%d %H:%M:%S"), cmd_id))
+                            conn_cmd.commit()
+                            print(f"[DOWNLINK] Perintah #{cmd_id} terkirim dan ditandai selesai.")
+                        conn_cmd.close()
+                    except Exception as e_cmd:
+                        print(f"[DOWNLINK ERROR] Gagal mengirim perintah: {e_cmd}")
 
                 # ------------------------------------------------------------------
                 # 2. PENERIMAAN ALIRAN GAMBAR BINER MULTI-NODE

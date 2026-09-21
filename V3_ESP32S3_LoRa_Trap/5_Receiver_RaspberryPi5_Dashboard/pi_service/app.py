@@ -12,6 +12,7 @@ Lab ELINS - Universitas Gadjah Mada
 """
 
 import os
+import time
 import sqlite3
 import threading
 from flask import Flask, render_template, jsonify, send_file, request
@@ -171,6 +172,137 @@ def export_csv():
     if os.path.exists(CSV_PATH):
         return send_file(CSV_PATH, as_attachment=True, download_name="sensor_hama_history.csv")
     return "Data CSV belum tersedia", 404
+
+
+# ====================================================================================
+# API KONTROL DUA ARAH (BIDIRECTIONAL COMMAND)
+# ====================================================================================
+
+@app.route("/api/command/trigger", methods=["POST"])
+def api_command_trigger():
+    """Mengirim perintah jepret manual ke node transmitter via LoRa downlink."""
+    data = request.get_json(force=True) if request.is_json else {}
+    node_id = data.get("node_id", "NODE_01").upper().strip()
+
+    command_str = f"CMD,{node_id},SNAP"
+    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""
+    INSERT INTO pending_commands (timestamp_created, node_id, command_type, command_payload, command_str)
+    VALUES (?, ?, ?, ?, ?)
+    """, (now_str, node_id, "SNAP", "", command_str))
+    conn.commit()
+    cmd_id = c.lastrowid
+    conn.close()
+
+    return jsonify({
+        "status": "success",
+        "message": f"Perintah jepret manual untuk {node_id} masuk antrean (#{cmd_id}). "
+                   f"Akan dikirim saat node bangun dari Deep Sleep berikutnya.",
+        "command_id": cmd_id,
+        "command_str": command_str
+    })
+
+
+@app.route("/api/command/schedule", methods=["POST"])
+def api_command_schedule():
+    """Mengubah jadwal pengambilan foto harian node transmitter."""
+    data = request.get_json(force=True) if request.is_json else {}
+    node_id = data.get("node_id", "NODE_01").upper().strip()
+    hour = data.get("hour", 8)
+    minute = data.get("minute", 0)
+
+    # Validasi input
+    try:
+        hour = int(hour)
+        minute = int(minute)
+    except (ValueError, TypeError):
+        return jsonify({"status": "error", "message": "Jam dan menit harus berupa angka."}), 400
+
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return jsonify({"status": "error", "message": "Jam harus 0-23 dan menit harus 0-59."}), 400
+
+    command_str = f"CMD,{node_id},SCHEDULE,{hour:02d},{minute:02d}"
+    payload = f"{hour:02d}:{minute:02d}"
+    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute("""
+    INSERT INTO pending_commands (timestamp_created, node_id, command_type, command_payload, command_str)
+    VALUES (?, ?, ?, ?, ?)
+    """, (now_str, node_id, "SCHEDULE", payload, command_str))
+    conn.commit()
+    cmd_id = c.lastrowid
+    conn.close()
+
+    return jsonify({
+        "status": "success",
+        "message": f"Jadwal foto {node_id} akan diubah ke {payload} WIB (antrean #{cmd_id}). "
+                   f"Perubahan diterapkan saat node bangun dari Deep Sleep.",
+        "command_id": cmd_id,
+        "command_str": command_str
+    })
+
+
+@app.route("/api/command/status")
+def api_command_status():
+    """Mengembalikan status antrean perintah terbaru."""
+    node = request.args.get("node")
+
+    conn = get_db_connection()
+    c = conn.cursor()
+
+    # Ambil 10 perintah terakhir
+    if node:
+        c.execute("""
+        SELECT id, timestamp_created, node_id, command_type, command_payload, command_str, executed, executed_at 
+        FROM pending_commands WHERE node_id = ? ORDER BY id DESC LIMIT 10
+        """, (node,))
+    else:
+        c.execute("""
+        SELECT id, timestamp_created, node_id, command_type, command_payload, command_str, executed, executed_at 
+        FROM pending_commands ORDER BY id DESC LIMIT 10
+        """)
+    rows = c.fetchall()
+
+    # Ambil jadwal terakhir yang berhasil dikirim
+    if node:
+        c.execute("""
+        SELECT command_payload FROM pending_commands 
+        WHERE node_id = ? AND command_type = 'SCHEDULE' AND executed = 1 
+        ORDER BY id DESC LIMIT 1
+        """, (node,))
+    else:
+        c.execute("""
+        SELECT command_payload FROM pending_commands 
+        WHERE command_type = 'SCHEDULE' AND executed = 1 
+        ORDER BY id DESC LIMIT 1
+        """)
+    last_schedule = c.fetchone()
+    conn.close()
+
+    commands = []
+    for r in rows:
+        commands.append({
+            "id": r["id"],
+            "timestamp": r["timestamp_created"],
+            "node_id": r["node_id"],
+            "type": r["command_type"],
+            "payload": r["command_payload"],
+            "command": r["command_str"],
+            "executed": bool(r["executed"]),
+            "executed_at": r["executed_at"]
+        })
+
+    return jsonify({
+        "status": "success",
+        "commands": commands,
+        "active_schedule": last_schedule["command_payload"] if last_schedule else "08:00",
+        "pending_count": sum(1 for c in commands if not c["executed"])
+    })
 
 
 def start_background_receiver():
