@@ -32,11 +32,11 @@
 HardwareSerial LoRaSerial(2);
 
 void setup() {
-  // Serial USB ke PC (Baudrate 115200)
+  // Serial USB ke Raspberry Pi / PC (115200 baud)
   Serial.begin(115200);
-  delay(500);
+  delay(1000);
 
-  // Set buffer yang besar agar data biner gambar tidak terpotong
+  // Serial UART2 ke Modul LoRa Ebyte E220
   LoRaSerial.setRxBufferSize(4096);
   LoRaSerial.begin(115200, SERIAL_8N1, LORA_RX_PIN, LORA_TX_PIN);
 
@@ -55,13 +55,12 @@ void setup() {
 }
 
 void loop() {
-  // 1. DARI LORA KE PC (Transparan murni tanpa dekorasi agar file JPEG utuh)
+  // 1. DARI LORA KE RASPBERRY PI VIA KABEL USB (Murni tanpa modifikasi agar JPEG utuh)
   while (LoRaSerial.available()) {
     uint8_t b = LoRaSerial.read();
-    Serial.write(b); // Tembak langsung ke port USB PC
+    Serial.write(b);
 
 #if USE_OLED_DISPLAY
-    // Jika menggunakan OLED, kumpulkan baris untuk ditampilkan di layar kecil
     if (b == '\n') {
       if (oledBuffer.indexOf("[DATA]") != -1) {
         display.clearDisplay();
@@ -79,9 +78,11 @@ void loop() {
 #endif
   }
 
-  // 2. DARI PC KE LORA (Jika ada input balik)
+  // 2. DARI RASPBERRY PI KE LORA (Downlink perintah jepret / sinkronisasi waktu)
   while (Serial.available()) {
     uint8_t outgoingByte = Serial.read();
     LoRaSerial.write(outgoingByte);
   }
 }
+
+

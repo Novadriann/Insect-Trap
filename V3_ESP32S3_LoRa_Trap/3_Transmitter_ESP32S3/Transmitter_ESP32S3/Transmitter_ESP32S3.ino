@@ -182,6 +182,7 @@ void setup() {
   // Inisialisasi Serial Debug (Port USB TTL)
   Serial.begin(115200);
   delay(1000);
+
   Serial.println("\n========================================================");
   Serial.println("  SISTEM TRAP HAMA: ESP32-S3 CAM TRANSMITTER BANGUN");
   Serial.println("========================================================");
@@ -288,12 +289,13 @@ void setup() {
   // ----------------------------------------------------------------------------------
   // LANGKAH 1.5: RECEIVE WINDOW - MENDENGAR PERINTAH DOWNLINK (2 DETIK)
   // ----------------------------------------------------------------------------------
-  // Mirip LoRaWAN Class A: buka jendela dengar selama 2 detik setelah uplink
-  Serial.println("\n[DOWNLINK] Membuka Receive Window (2 detik)...");
+  // Mirip LoRaWAN Class A: buka jendela dengar selama 3.5 detik setelah uplink
+  // (Diperpanjang untuk menampung SETTIME + CMD secara berurutan)
+  Serial.println("\n[DOWNLINK] Membuka Receive Window (3.5 detik)...");
   unsigned long rxWindowStart = millis();
   String rxBuffer = "";
 
-  while (millis() - rxWindowStart < 2000) {
+  while (millis() - rxWindowStart < 3500) {
     if (LoRaSerial.available()) {
       char c = (char)LoRaSerial.read();
       rxBuffer += c;
@@ -356,6 +358,33 @@ void setup() {
             } else {
               Serial.printf("[DOWNLINK] Perintah bukan untuk node ini (target: %s)\n", cmdNodeId.c_str());
             }
+          }
+        } else if (rxBuffer.startsWith("SETTIME,")) {
+          // ================================================================
+          // SINKRONISASI WAKTU RTC DARI RASPBERRY PI
+          // Format: SETTIME,YYYY,MM,DD,HH,MM,SS
+          // Dikirim otomatis oleh receiver_daemon.py setiap ESP32 bangun
+          // ================================================================
+          if (rtcOk) {
+            String payload = rxBuffer.substring(8); // Hapus prefix "SETTIME,"
+            int vals[6] = {0};
+            int vIdx = 0;
+            int startPos = 0;
+            for (int ci = 0; ci <= (int)payload.length() && vIdx < 6; ci++) {
+              if (ci == (int)payload.length() || payload.charAt(ci) == ',') {
+                vals[vIdx++] = payload.substring(startPos, ci).toInt();
+                startPos = ci + 1;
+              }
+            }
+            if (vals[0] > 2020) {
+              rtc.adjust(DateTime(vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]));
+              Serial.printf("[RTC SYNC] >> WAKTU DISINKRONKAN DARI RASPBERRY PI: %04d-%02d-%02d %02d:%02d:%02d\n",
+                            vals[0], vals[1], vals[2], vals[3], vals[4], vals[5]);
+            } else {
+              Serial.println("[RTC SYNC] Data waktu tidak valid, sync diabaikan.");
+            }
+          } else {
+            Serial.println("[RTC SYNC] RTC tidak tersedia, sync diabaikan.");
           }
         }
         rxBuffer = ""; // Reset buffer untuk perintah berikutnya

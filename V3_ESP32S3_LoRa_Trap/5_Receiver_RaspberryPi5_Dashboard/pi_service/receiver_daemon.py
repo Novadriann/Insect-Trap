@@ -102,7 +102,7 @@ def init_database():
 
 
 def find_serial_port(preferred_port=None):
-    """Mencari port serial USB ESP32 secara otomatis di Linux / Raspberry Pi / Windows."""
+    """Mencari port serial USB atau GPIO internal (/dev/serial0) ESP32 di Raspberry Pi."""
     if preferred_port:
         return preferred_port
 
@@ -110,13 +110,14 @@ def find_serial_port(preferred_port=None):
         return "/dev/ttyUSB0"
     if os.path.exists("/dev/ttyACM0"):
         return "/dev/ttyACM0"
+    if os.path.exists("/dev/serial0"):
+        return "/dev/serial0"
+    if os.path.exists("/dev/ttyAMA0"):
+        return "/dev/ttyAMA0"
 
     ports = serial.tools.list_ports.comports()
     for p in ports:
         p_name = p.device
-        # Jangan gunakan port UART internal Raspberry Pi (ttyAMA)
-        if "ttyama" in p_name.lower():
-            continue
         desc = p.description.lower()
         if "usb" in p_name.lower() or "acm" in p_name.lower() or "cp210" in desc or "ch340" in desc or "uart" in desc:
             return p_name
@@ -229,8 +230,20 @@ def run_receiver(port=None, baudrate=115200):
 
                     print(f"[OK] Sensor [{node_id}] tersimpan: Suhu={suhu}°C, RH={kelembaban}%, Waktu={waktu_rtc}")
 
-                    # === DOWNLINK: Kirim perintah tertunda ke node dalam Receive Window ===
+                    # === DOWNLINK: Kirim ke node dalam Receive Window ===
                     try:
+                        # 1. SELALU kirim sinkronisasi waktu RTC (Raspberry Pi sebagai sumber waktu)
+                        now_t = time.localtime()
+                        settime_cmd = (
+                            f"SETTIME,{now_t.tm_year},{now_t.tm_mon:02d},{now_t.tm_mday:02d},"
+                            f"{now_t.tm_hour:02d},{now_t.tm_min:02d},{now_t.tm_sec:02d}"
+                        )
+                        ser.write((settime_cmd + "\n").encode('utf-8'))
+                        ser.flush()
+                        print(f"[RTC SYNC] Jam Raspberry Pi dikirim ke [{node_id}]: {settime_cmd}")
+
+                        # 2. Kirim perintah tertunda (CMD) jika ada — dengan jeda kecil
+                        time.sleep(0.15)  # Jeda agar SETTIME selesai ditransmisikan LoRa dulu
                         conn_cmd = sqlite3.connect(DB_PATH)
                         c_cmd = conn_cmd.cursor()
                         c_cmd.execute("""
