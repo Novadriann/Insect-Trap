@@ -1,11 +1,20 @@
 /**
  * ====================================================================================
- * PROGRAM RECEIVER NODE ESP32 - CLEAN BRIDGE & STANDALONE
- * Hardware : ESP32 Dev Module + LoRa Ebyte E220-900T22D
- * Fitur    : - Meneruskan aliran data LoRa secara murni (transparent passthrough) ke PC
- *            - Tanpa bingkai dekoratif yang merusak parsing Python
- *            - Mendukung penerimaan data sensor teks dan data biner gambar JPEG utuh
- *            - Mendukung tampilan opsional layar I2C OLED 0.96" (SSD1306)
+ * PROGRAM RECEIVER NODE ESP32 - CLEAN BRIDGE & STANDALONE (KABEL MICRO-USB)
+ * Hardware : ESP32 Dev Module + LoRa Ebyte E220-900T22D + Raspberry Pi 5
+ * Koneksi  : Kabel Micro-USB langsung ke port USB Raspberry Pi 5 (/dev/ttyUSB0)
+ * Fitur    : - Meneruskan aliran data LoRa secara murni (transparent passthrough) ke RPi via USB
+ *            - Mendukung transfer data sensor teks dan rekonstruksi file biner JPEG utuh
+ *            - Mendukung downlink dua arah (sinkronisasi waktu RTC DS3231 & perintah SNAP manual)
+ *            - Bebas dari konflik GPIO serial internal
+ * Wiring   : 
+ *   - LoRa VCC  -> 5V ESP32
+ *   - LoRa GND  -> GND ESP32
+ *   - LoRa TXD  -> GPIO 16 (RX2 ESP32)
+ *   - LoRa RXD  -> GPIO 17 (TX2 ESP32)
+ *   - LoRa M0   -> GND (Mode Normal)
+ *   - LoRa M1   -> GND (Mode Normal)
+ *   - Port USB  -> Kabel Micro-USB ke port USB Raspberry Pi 5
  * Lab ELINS - Universitas Gadjah Mada
  * ====================================================================================
  */
