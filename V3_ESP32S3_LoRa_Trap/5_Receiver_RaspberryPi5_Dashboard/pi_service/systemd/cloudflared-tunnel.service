@@ -1,0 +1,13 @@
+[Unit]
+Description=Cloudflare Tunnel Auto-Start (Quick Tunnel)
+After=network.target insect-trap.service
+
+[Service]
+Type=simple
+User=insect-trap
+ExecStart=/bin/sh -c 'cloudflared tunnel --url http://127.0.0.1:5000 > /home/insect-trap/tunnel.log 2>&1'
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,14 @@
+[Unit]
+Description=Insect Trap Web Dashboard & LoRa Receiver
+After=network.target
+
+[Service]
+Type=simple
+User=insect-trap
+WorkingDirectory=/home/insect-trap/Insect-Trap/V3_ESP32S3_LoRa_Trap/5_Receiver_RaspberryPi5_Dashboard/pi_service
+ExecStart=/usr/bin/python3 app.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

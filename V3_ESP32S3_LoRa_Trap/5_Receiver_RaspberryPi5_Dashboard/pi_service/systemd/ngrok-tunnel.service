@@ -1,0 +1,14 @@
+[Unit]
+Description=Ngrok Permanent Static Tunnel
+After=network.target insect-trap.service
+
+[Service]
+Type=simple
+User=insect-trap
+Environment="HOME=/home/insect-trap"
+ExecStart=/usr/local/bin/ngrok http 5000 --url=panning-overtake-sputter.ngrok-free.dev
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
