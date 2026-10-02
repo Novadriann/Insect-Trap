@@ -180,13 +180,16 @@ def export_csv():
 
 @app.route("/api/command/trigger", methods=["POST"])
 def api_command_trigger():
-    """Mengirim perintah jepret manual ke node transmitter via LoRa downlink."""
+    """Mengirim perintah jepret manual ke node transmitter via LoRa downlink (INSTAN)."""
+    import receiver_daemon as rd
+
     data = request.get_json(force=True) if request.is_json else {}
     node_id = data.get("node_id", "NODE_01").upper().strip()
 
     command_str = f"CMD,{node_id},SNAP"
     now_str = time.strftime("%Y-%m-%d %H:%M:%S")
 
+    # 1. Simpan ke database sebagai riwayat perintah
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("""
@@ -195,15 +198,45 @@ def api_command_trigger():
     """, (now_str, node_id, "SNAP", "", command_str))
     conn.commit()
     cmd_id = c.lastrowid
+
+    # 2. KIRIM LANGSUNG ke serial port (Instant SNAP - Always ON Mode)
+    sent_now = False
+    with rd.serial_lock:
+        ser = rd.serial_instance
+        if ser and ser.is_open:
+            try:
+                ser.write((command_str + "\n").encode("utf-8"))
+                ser.flush()
+                # Tandai sebagai terkirim langsung
+                c.execute("""
+                UPDATE pending_commands SET executed = 1, executed_at = ? WHERE id = ?
+                """, (now_str, cmd_id))
+                conn.commit()
+                sent_now = True
+                print(f"[INSTAN SNAP] Perintah {command_str} langsung dikirim ke {node_id}!")
+            except Exception as e:
+                print(f"[INSTAN SNAP ERROR] Gagal kirim langsung: {e}")
     conn.close()
 
-    return jsonify({
-        "status": "success",
-        "message": f"Perintah jepret manual untuk {node_id} masuk antrean (#{cmd_id}). "
-                   f"Akan dikirim saat node bangun dari Deep Sleep berikutnya.",
-        "command_id": cmd_id,
-        "command_str": command_str
-    })
+    if sent_now:
+        return jsonify({
+            "status":       "success",
+            "message":      f"Perintah jepret dikirim SEKARANG ke {node_id}! "
+                            f"Foto akan tiba dalam ~30-60 detik.",
+            "command_id":   cmd_id,
+            "command_str":  command_str,
+            "sent_instant": True
+        })
+    else:
+        return jsonify({
+            "status":       "success",
+            "message":      f"Perintah jepret untuk {node_id} masuk antrean (#{cmd_id}). "
+                            f"Akan dikirim saat koneksi serial tersedia.",
+            "command_id":   cmd_id,
+            "command_str":  command_str,
+            "sent_instant": False
+        })
+
 
 
 @app.route("/api/command/schedule", methods=["POST"])

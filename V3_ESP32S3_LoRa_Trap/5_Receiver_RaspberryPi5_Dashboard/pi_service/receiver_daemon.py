@@ -28,6 +28,12 @@ CAPTURES_DIR = os.path.join(BASE_DIR, "static", "captures")
 ANNOTATED_DIR = os.path.join(BASE_DIR, "static", "annotated")
 
 os.makedirs(CAPTURES_DIR, exist_ok=True)
+
+# --- SHARED SERIAL INSTANCE (Thread-Safe, diakses oleh app.py untuk kirim CMD instan) ---
+import threading
+serial_instance = None              # Objek serial aktif
+serial_lock     = threading.Lock()  # Lock agar tidak ada race condition
+
 os.makedirs(ANNOTATED_DIR, exist_ok=True)
 
 # Inisialisasi Detektor Serangga Kaper RPi5
@@ -187,6 +193,10 @@ def run_receiver(port=None, baudrate=115200):
         try:
             ser = serial.Serial(target_port, baudrate, timeout=2)
             print(f"[RECEIVER DAEMON] Terhubung ke {target_port} pada {baudrate} baud.")
+            # Simpan ke global agar app.py bisa kirim CMD langsung
+            global serial_instance
+            with serial_lock:
+                serial_instance = ser
         except Exception as e:
             print(f"[RECEIVER DAEMON] Gagal membuka port {target_port}: {e}. Mencoba lagi dalam 3 detik...")
             time.sleep(3)
@@ -364,6 +374,8 @@ def run_receiver(port=None, baudrate=115200):
 
             except (serial.SerialException, OSError) as e:
                 print(f"[RECEIVER DAEMON] Koneksi serial terputus: {e}. Menghubungkan ulang dalam 2 detik...")
+                with serial_lock:
+                    serial_instance = None
                 try:
                     ser.close()
                 except Exception:
