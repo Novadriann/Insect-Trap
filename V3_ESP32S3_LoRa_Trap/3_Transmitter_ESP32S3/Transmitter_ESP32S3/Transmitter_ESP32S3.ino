@@ -303,13 +303,14 @@ void sendSensorData() {
                   int newMin  = rxBuf.substring(c4 + 1).toInt();
                   photoTargetHour   = newHour;
                   photoTargetMinute = newMin;
+                  lastPhotoDay      = -1;  // Reset agar jadwal baru langsung bisa dites di hari yang sama
                   Preferences prefs;
                   prefs.begin("trapconf", false);
                   prefs.putInt("photoHour", newHour);
                   prefs.putInt("photoMin",  newMin);
                   prefs.end();
                   LoRaSerial.printf("ACK,%s,SCHEDULE,%02d,%02d,OK\n", NODE_ID, newHour, newMin);
-                  Serial.printf("[SCHEDULE] Jadwal foto diubah -> %02d:%02d\n", newHour, newMin);
+                  Serial.printf("[SCHEDULE] Jadwal foto diubah -> %02d:%02d (lastPhotoDay direset)\n", newHour, newMin);
                 }
               }
             }
@@ -450,13 +451,14 @@ void loop() {
                   int newMin  = loraInBuf.substring(c4 + 1).toInt();
                   photoTargetHour   = newHour;
                   photoTargetMinute = newMin;
+                  lastPhotoDay      = -1;  // Reset agar jadwal baru langsung bisa dites di hari yang sama
                   Preferences prefs;
                   prefs.begin("trapconf", false);
                   prefs.putInt("photoHour", newHour);
                   prefs.putInt("photoMin",  newMin);
                   prefs.end();
                   LoRaSerial.printf("ACK,%s,SCHEDULE,%02d,%02d,OK\n", NODE_ID, newHour, newMin);
-                  Serial.printf("[SCHEDULE] Jadwal foto diubah -> %02d:%02d\n", newHour, newMin);
+                  Serial.printf("[SCHEDULE] Jadwal foto diubah -> %02d:%02d (lastPhotoDay direset)\n", newHour, newMin);
                 }
               }
             }
@@ -500,6 +502,9 @@ void loop() {
     if (nowRtc.hour()   == photoTargetHour   &&
         nowRtc.minute() >= photoTargetMinute  &&
         lastPhotoDay    != nowRtc.day()) {
+      Serial.printf("[JADWAL HARIAN] Jam target %02d:%02d tercapai! (RTC: %02d:%02d:%02d). Memulai jepret foto harian...\n",
+                    photoTargetHour, photoTargetMinute,
+                    nowRtc.hour(), nowRtc.minute(), nowRtc.second());
       lastPhotoDay = nowRtc.day();
       captureAndSendPhoto("JADWAL HARIAN TERJADWAL");
     }

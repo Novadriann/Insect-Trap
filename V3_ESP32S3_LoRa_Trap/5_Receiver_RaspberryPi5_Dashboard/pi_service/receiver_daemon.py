@@ -248,12 +248,13 @@ def run_receiver(port=None, baudrate=115200):
                             f"SETTIME,{now_t.tm_year},{now_t.tm_mon:02d},{now_t.tm_mday:02d},"
                             f"{now_t.tm_hour:02d},{now_t.tm_min:02d},{now_t.tm_sec:02d}"
                         )
-                        ser.write((settime_cmd + "\n").encode('utf-8'))
-                        ser.flush()
+                        with serial_lock:
+                            ser.write((settime_cmd + "\n").encode('utf-8'))
+                            ser.flush()
                         print(f"[RTC SYNC] Jam Raspberry Pi dikirim ke [{node_id}]: {settime_cmd}")
 
-                        # 2. Kirim perintah tertunda (CMD) jika ada — dengan jeda kecil
-                        time.sleep(0.15)  # Jeda agar SETTIME selesai ditransmisikan LoRa dulu
+                        # 2. Kirim perintah tertunda (CMD) jika ada — dengan jeda cukup
+                        time.sleep(0.5)  # Jeda 500ms agar SETTIME selesai ditransmisikan LoRa dulu
                         conn_cmd = sqlite3.connect(DB_PATH)
                         c_cmd = conn_cmd.cursor()
                         c_cmd.execute("""
@@ -266,8 +267,9 @@ def run_receiver(port=None, baudrate=115200):
                         if pending:
                             cmd_id, cmd_str = pending
                             print(f"[DOWNLINK] Mengirim perintah ke [{node_id}]: {cmd_str}")
-                            ser.write((cmd_str + "\n").encode('utf-8'))
-                            ser.flush()
+                            with serial_lock:
+                                ser.write((cmd_str + "\n").encode('utf-8'))
+                                ser.flush()
 
                             # Tandai perintah sebagai terkirim
                             c_cmd.execute("""

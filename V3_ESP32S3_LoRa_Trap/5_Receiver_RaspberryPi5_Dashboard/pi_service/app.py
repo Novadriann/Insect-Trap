@@ -241,7 +241,9 @@ def api_command_trigger():
 
 @app.route("/api/command/schedule", methods=["POST"])
 def api_command_schedule():
-    """Mengubah jadwal pengambilan foto harian node transmitter."""
+    """Mengubah jadwal pengambilan foto harian node transmitter (INSTAN)."""
+    import receiver_daemon as rd
+
     data = request.get_json(force=True) if request.is_json else {}
     node_id = data.get("node_id", "NODE_01").upper().strip()
     hour = data.get("hour", 8)
@@ -261,6 +263,7 @@ def api_command_schedule():
     payload = f"{hour:02d}:{minute:02d}"
     now_str = time.strftime("%Y-%m-%d %H:%M:%S")
 
+    # 1. Simpan ke database
     conn = get_db_connection()
     c = conn.cursor()
     c.execute("""
@@ -269,15 +272,43 @@ def api_command_schedule():
     """, (now_str, node_id, "SCHEDULE", payload, command_str))
     conn.commit()
     cmd_id = c.lastrowid
+
+    # 2. KIRIM LANGSUNG ke serial port (Instant SCHEDULE)
+    sent_now = False
+    with rd.serial_lock:
+        ser = rd.serial_instance
+        if ser and ser.is_open:
+            try:
+                ser.write((command_str + "\n").encode("utf-8"))
+                ser.flush()
+                # Tandai sebagai terkirim langsung
+                c.execute("""
+                UPDATE pending_commands SET executed = 1, executed_at = ? WHERE id = ?
+                """, (now_str, cmd_id))
+                conn.commit()
+                sent_now = True
+                print(f"[INSTAN SCHEDULE] Perintah {command_str} langsung dikirim ke {node_id}!")
+            except Exception as e:
+                print(f"[INSTAN SCHEDULE ERROR] Gagal kirim langsung: {e}")
     conn.close()
 
-    return jsonify({
-        "status": "success",
-        "message": f"Jadwal foto {node_id} akan diubah ke {payload} WIB (antrean #{cmd_id}). "
-                   f"Perubahan diterapkan pada siklus sensor berikutnya.",
-        "command_id": cmd_id,
-        "command_str": command_str
-    })
+    if sent_now:
+        return jsonify({
+            "status": "success",
+            "message": f"Jadwal foto {node_id} BERHASIL DIUBAH ke {payload} WIB! (Terkirim langsung)",
+            "command_id": cmd_id,
+            "command_str": command_str,
+            "sent_instant": True
+        })
+    else:
+        return jsonify({
+            "status": "success",
+            "message": f"Jadwal foto {node_id} akan diubah ke {payload} WIB (antrean #{cmd_id}). "
+                       f"Akan dikirim saat koneksi serial siap.",
+            "command_id": cmd_id,
+            "command_str": command_str,
+            "sent_instant": False
+        })
 
 
 @app.route("/api/command/status")
