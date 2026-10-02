@@ -617,7 +617,8 @@
               : 'text-amber-400 animate-pulse';
             const statusText = cmd.executed
               ? `Terkirim ${cmd.executed_at ? cmd.executed_at.substring(11, 16) : ''}`
-              : 'Menunggu node bangun...';
+              : (cmd.type === 'SNAP' ? '⚡ Dikirim langsung...' : '⏳ Menunggu dikirim...');
+
             return `
               <div class="flex items-center justify-between text-[11px] py-1 px-2 rounded bg-slate-900/50">
                 <div class="flex items-center space-x-2">

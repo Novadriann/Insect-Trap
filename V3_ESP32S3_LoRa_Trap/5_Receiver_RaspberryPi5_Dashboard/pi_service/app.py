@@ -274,7 +274,7 @@ def api_command_schedule():
     return jsonify({
         "status": "success",
         "message": f"Jadwal foto {node_id} akan diubah ke {payload} WIB (antrean #{cmd_id}). "
-                   f"Perubahan diterapkan saat node bangun dari Deep Sleep.",
+                   f"Perubahan diterapkan pada siklus sensor berikutnya.",
         "command_id": cmd_id,
         "command_str": command_str
     })
