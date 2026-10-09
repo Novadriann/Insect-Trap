@@ -223,11 +223,11 @@ class RaspberryPiKaperCounter:
 
         total_count = len(detected_insects)
 
-        # 7. Evaluasi Status Ambang Batas Populasi Kaper
-        if total_count < 5:
+        # 7. Evaluasi Status Ambang Batas Populasi Kaper (ngengat/perangkap/hari)
+        if total_count <= 4:
             threat_level = "Aman"
             status_color = (0, 200, 0) # Hijau
-        elif total_count <= 15:
+        elif total_count <= 9:
             threat_level = "Waspada"
             status_color = (0, 165, 255) # Oranye
         else:
@@ -282,10 +282,10 @@ class RaspberryPiKaperCounter:
                 "confidence": round(conf, 2)
             })
 
-        if total_count < 5:
+        if total_count <= 4:
             threat_level = "Aman"
             status_color = (0, 200, 0)
-        elif total_count <= 15:
+        elif total_count <= 9:
             threat_level = "Waspada"
             status_color = (0, 165, 255)
         else:
@@ -382,11 +382,11 @@ class RaspberryPiKaperCounter:
 
         total_count = len(detected_insects)
 
-        # Evaluasi Ambang Batas Ancaman Hama
-        if total_count < 5:
+        # Evaluasi Ambang Batas Ancaman Hama (ngengat/perangkap/hari)
+        if total_count <= 4:
             threat_level = "Aman"
             status_color = (0, 200, 0)
-        elif total_count <= 15:
+        elif total_count <= 9:
             threat_level = "Waspada"
             status_color = (0, 165, 255)
         else:

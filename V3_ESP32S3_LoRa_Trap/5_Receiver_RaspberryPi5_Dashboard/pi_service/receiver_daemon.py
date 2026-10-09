@@ -83,6 +83,13 @@ def init_database():
     except Exception:
         pass
 
+    # Bersihkan prefix 'Waktu:' yang mungkin tersimpan pada data riwayat lama
+    try:
+        cursor.execute("UPDATE sensor_logs SET waktu_rtc = TRIM(REPLACE(waktu_rtc, 'Waktu:', '')) WHERE waktu_rtc LIKE '%Waktu:%'")
+        cursor.execute("UPDATE image_logs SET waktu_rtc = TRIM(REPLACE(waktu_rtc, 'Waktu:', '')) WHERE waktu_rtc LIKE '%Waktu:%'")
+    except Exception:
+        pass
+
     # Tabel antrean perintah downlink (Kontrol 2 Arah)
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS pending_commands (
@@ -145,7 +152,7 @@ def parse_sensor_line(text, fallback_time):
             if "Node:" in p:
                 node_id = p.replace("[DATA]", "").replace("Node:", "").strip()
             elif "Waktu:" in p:
-                waktu_rtc = p.replace("[DATA] Waktu:", "").strip()
+                waktu_rtc = re.sub(r'^(?:\[DATA\]\s*)?Waktu:\s*', '', p, flags=re.IGNORECASE).strip()
             elif "Suhu:" in p:
                 try:
                     suhu = float(p.replace("Suhu:", "").replace("C", "").strip())

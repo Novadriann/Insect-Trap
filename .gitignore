@@ -1,0 +1,27 @@
+# Python cache & virtual environment
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+.env
+
+# Database & CSV Runtime logs (Mencegah data tertimpa saat update git)
+*.db
+*.db-journal
+*.db.bak
+*.sqlite3
+trap_monitoring.db
+sensor_history.csv
+
+# Direktori hasil foto lapangan (Mencegah foto hilang saat update git)
+V3_ESP32S3_LoRa_Trap/5_Receiver_RaspberryPi5_Dashboard/pi_service/static/captures/*
+!V3_ESP32S3_LoRa_Trap/5_Receiver_RaspberryPi5_Dashboard/pi_service/static/captures/.gitkeep
+V3_ESP32S3_LoRa_Trap/5_Receiver_RaspberryPi5_Dashboard/pi_service/static/annotated/*
+!V3_ESP32S3_LoRa_Trap/5_Receiver_RaspberryPi5_Dashboard/pi_service/static/annotated/.gitkeep
+
+# OS / Editor temporary files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

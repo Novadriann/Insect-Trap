@@ -104,11 +104,11 @@ class InsectCounter:
 
         total_count = len(detected_insects)
 
-        # Tentukan Status Bahaya Populasi Hama
-        if total_count < 10:
+        # Tentukan Status Bahaya Populasi Hama (ngengat/perangkap/hari)
+        if total_count <= 4:
             threat_level = "Aman"
             status_color = (0, 200, 0) # Hijau
-        elif total_count <= 25:
+        elif total_count <= 9:
             threat_level = "Waspada"
             status_color = (0, 165, 255) # Oranye
         else:
@@ -152,9 +152,9 @@ class InsectCounter:
         annotated_img = res.plot()
         total_count = len(res.boxes)
 
-        if total_count < 10:
+        if total_count <= 4:
             threat_level = "Aman"
-        elif total_count <= 25:
+        elif total_count <= 9:
             threat_level = "Waspada"
         else:
             threat_level = "Bahaya"

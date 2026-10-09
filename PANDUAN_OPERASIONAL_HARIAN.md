@@ -78,11 +78,12 @@ python3 app.py
    ```text
    http://100.64.81.29:5000
    ```
-3. **Tampilan Web Monitoring:**
-   * Foto perangkap serangga terbaru otomatis diperbarui.
-   * Kotak hijau (*bounding box*) hasil deteksi kecerdasan buatan (AI) menandai serangga hama yang tertangkap.
-   * Grafik tren populasi hama dan kondisi lingkungan (suhu & kelembaban) tersaji secara real-time.
-   * Klik tombol hijau **`Unduh CSV`** jika ingin mengekspor data ke format Excel.
+3. **Fitur Dashboard:**
+   * **Mode Siang / Malam**: Klik ikon bulan/matahari di bilah navigasi atas untuk berganti tema tampilan.
+   * **Login Administrator / Petani**: Untuk menggunakan tombol **Jepret Manual** atau **Ubah Jadwal Foto Harian**, klik tombol **Login** di kanan atas (Username: `petani`, Password: `petani`).
+   * **Visualisasi AI & Foto Asli**: Anda dapat beralih antara melihat hasil bounding box deteksi AI atau foto mentah.
+   * **Status Populasi Hama**: Menggunakan ambang batas standar (🟢 0–4 Aman, 🟡 5–9 Waspada, 🔴 ≥10 Bahaya).
+   * **Ekspor Laporan**: Klik tombol hijau **`Unduh CSV`** untuk mengekspor data riwayat sensor ke format Excel.
 
 ---
 

@@ -15,10 +15,15 @@ import os
 import time
 import sqlite3
 import threading
-from flask import Flask, render_template, jsonify, send_file, request
+from flask import Flask, render_template, jsonify, send_file, request, session
 from receiver_daemon import run_receiver, init_database, DB_PATH, CSV_PATH, CAPTURES_DIR, ANNOTATED_DIR
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
+app.secret_key = os.environ.get("FLASK_SECRET_KEY", "kaper-trap-elins-ugm-2026-secret")
+
+# --- Kredensial Login Kontrol Panel ---
+AUTH_USERNAME = "petani"
+AUTH_PASSWORD = "petani"
 
 
 def get_db_connection():
@@ -34,6 +39,50 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/api/auth/login", methods=["POST"])
+def api_login():
+    """Login untuk mengakses fitur kontrol (Jepret & Jadwal)."""
+    data = {}
+    if request.is_json:
+        data = request.get_json(silent=True) or {}
+    else:
+        try:
+            data = request.get_json(force=True, silent=True) or {}
+        except Exception:
+            data = {}
+    if not data:
+        data = request.form.to_dict() or {}
+
+    username = str(data.get("username", "")).strip().lower()
+    password = str(data.get("password", "")).strip().lower()
+
+    if username == "petani" and password == "petani":
+        session["logged_in"] = True
+        session["username"] = "petani"
+        return jsonify({
+            "status": "success",
+            "message": "Login berhasil! Selamat datang, Petani.",
+            "username": "petani"
+        })
+    else:
+        return jsonify({"status": "error", "message": "Username atau password salah."}), 401
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def api_logout():
+    """Logout dari kontrol panel."""
+    session.clear()
+    return jsonify({"status": "success", "message": "Berhasil logout."})
+
+
+@app.route("/api/auth/check")
+def api_auth_check():
+    """Memeriksa status login."""
+    if session.get("logged_in"):
+        return jsonify({"status": "success", "logged_in": True, "username": session.get("username", "")})
+    return jsonify({"status": "success", "logged_in": False})
+
+
 @app.route("/api/nodes")
 def api_nodes():
     """Mengembalikan daftar seluruh Node ID yang aktif."""
@@ -47,6 +96,16 @@ def api_nodes():
     if not nodes:
         nodes = ["NODE_01", "NODE_02"]
     return jsonify({"status": "success", "nodes": sorted(nodes)})
+
+
+import re
+
+def clean_timestamp(ts):
+    """Membersihkan format timestamp, menghapus prefix 'Waktu:' atau '[DATA]'."""
+    if not ts:
+        return ""
+    clean = re.sub(r'^(?:\[DATA\]\s*)?Waktu:\s*', '', str(ts), flags=re.IGNORECASE).strip()
+    return clean
 
 
 @app.route("/api/latest")
@@ -77,7 +136,7 @@ def api_latest():
         "node_id": latest_sensor["node_id"] if latest_sensor and "node_id" in latest_sensor.keys() else (node or "NODE_01"),
         "suhu": latest_sensor["suhu"] if latest_sensor else 0.0,
         "kelembaban": latest_sensor["kelembaban"] if latest_sensor else 0.0,
-        "waktu_rtc": latest_sensor["waktu_rtc"] if latest_sensor else "Menunggu data...",
+        "waktu_rtc": clean_timestamp(latest_sensor["waktu_rtc"]) if latest_sensor else "Menunggu data...",
         "timestamp_pc": latest_sensor["timestamp_pc"] if latest_sensor else "-"
     }
 
@@ -88,8 +147,8 @@ def api_latest():
         "annotated_url": f"/static/annotated/{latest_image['filename_annotated']}" if latest_image else "",
         "insect_count": latest_image["insect_count"] if latest_image else 0,
         "threat_level": latest_image["threat_level"] if latest_image else "Normal",
-        "waktu_rtc": latest_image["waktu_rtc"] if latest_image else "-",
-        "size_kb": round(latest_image["file_size_bytes"] / 1024, 1) if latest_image else 0
+        "waktu_rtc": clean_timestamp(latest_image["waktu_rtc"]) if latest_image else "-",
+        "size_kb": round(latest_image["file_size_bytes"] / 1024, 1) if (latest_image and latest_image["file_size_bytes"]) else 0
     }
 
     return jsonify({
@@ -101,26 +160,30 @@ def api_latest():
 
 @app.route("/api/history")
 def api_history():
-    """Mengembalikan riwayat sensor (30 data terakhir) untuk grafik Chart.js."""
+    """Mengembalikan riwayat sensor dengan rentang waktu dinamis (1d, 3d, 7d) untuk Chart.js."""
     node = request.args.get("node")
+    range_param = request.args.get("range", "1d").lower()
+    limit_map = {"1d": 500, "3d": 1500, "7d": 3500}
+    limit = limit_map.get(range_param, 500)
 
     conn = get_db_connection()
     c = conn.cursor()
     if node:
-        c.execute("SELECT * FROM sensor_logs WHERE node_id = ? ORDER BY id DESC LIMIT 30", (node,))
+        c.execute("SELECT * FROM sensor_logs WHERE node_id = ? ORDER BY id DESC LIMIT ?", (node, limit))
     else:
-        c.execute("SELECT * FROM sensor_logs ORDER BY id DESC LIMIT 30")
+        c.execute("SELECT * FROM sensor_logs ORDER BY id DESC LIMIT ?", (limit,))
     rows = c.fetchall()
     conn.close()
 
     # Urutkan kronologis (terlama ke terbaru)
     rows = list(reversed(rows))
 
-    labels = [r["waktu_rtc"] for r in rows]
+    labels = [clean_timestamp(r["waktu_rtc"]) for r in rows]
     suhu_list = [r["suhu"] for r in rows]
     hum_list = [r["kelembaban"] for r in rows]
 
     return jsonify({
+        "range": range_param,
         "labels": labels,
         "suhu": suhu_list,
         "kelembaban": hum_list
@@ -129,15 +192,18 @@ def api_history():
 
 @app.route("/api/detections")
 def api_detections():
-    """Mengembalikan riwayat tangkapan gambar dan populasi kupu kaper."""
+    """Mengembalikan riwayat tangkapan gambar dan populasi kupu kaper dengan rentang waktu."""
     node = request.args.get("node")
+    range_param = request.args.get("range", "1d").lower()
+    limit_map = {"1d": 50, "3d": 150, "7d": 350}
+    limit = limit_map.get(range_param, 50)
 
     conn = get_db_connection()
     c = conn.cursor()
     if node:
-        c.execute("SELECT * FROM image_logs WHERE node_id = ? ORDER BY id DESC LIMIT 20", (node,))
+        c.execute("SELECT * FROM image_logs WHERE node_id = ? ORDER BY id DESC LIMIT ?", (node, limit))
     else:
-        c.execute("SELECT * FROM image_logs ORDER BY id DESC LIMIT 20")
+        c.execute("SELECT * FROM image_logs ORDER BY id DESC LIMIT ?", (limit,))
     rows = c.fetchall()
     conn.close()
 
@@ -146,20 +212,21 @@ def api_detections():
         results.append({
             "id": r["id"],
             "node_id": r["node_id"] if "node_id" in r.keys() else "NODE_01",
-            "timestamp": r["waktu_rtc"],
+            "timestamp": clean_timestamp(r["waktu_rtc"]),
             "raw_url": f"/static/captures/{r['filename_raw']}",
             "annotated_url": f"/static/annotated/{r['filename_annotated']}",
             "count": r["insect_count"],
             "threat": r["threat_level"],
-            "size_kb": round(r["file_size_bytes"] / 1024, 1)
+            "size_kb": round(r["file_size_bytes"] / 1024, 1) if r["file_size_bytes"] else 0
         })
 
     # Data tren serangga harian
     reversed_rows = list(reversed(rows))
-    trend_labels = [r["waktu_rtc"] for r in reversed_rows]
+    trend_labels = [clean_timestamp(r["waktu_rtc"]) for r in reversed_rows]
     trend_counts = [r["insect_count"] for r in reversed_rows]
 
     return jsonify({
+        "range": range_param,
         "detections": results,
         "trend_labels": trend_labels,
         "trend_counts": trend_counts
@@ -181,6 +248,11 @@ def export_csv():
 @app.route("/api/command/trigger", methods=["POST"])
 def api_command_trigger():
     """Mengirim perintah jepret manual ke node transmitter via LoRa downlink (INSTAN)."""
+    # Cek autentikasi (session atau header X-Auth-User)
+    auth_header = request.headers.get("X-Auth-User", "").strip().lower()
+    if not session.get("logged_in") and auth_header != "petani":
+        return jsonify({"status": "error", "message": "Anda harus login terlebih dahulu untuk mengakses fitur ini."}), 403
+
     import receiver_daemon as rd
 
     data = request.get_json(force=True) if request.is_json else {}
@@ -242,6 +314,11 @@ def api_command_trigger():
 @app.route("/api/command/schedule", methods=["POST"])
 def api_command_schedule():
     """Mengubah jadwal pengambilan foto harian node transmitter (INSTAN)."""
+    # Cek autentikasi (session atau header X-Auth-User)
+    auth_header = request.headers.get("X-Auth-User", "").strip().lower()
+    if not session.get("logged_in") and auth_header != "petani":
+        return jsonify({"status": "error", "message": "Anda harus login terlebih dahulu untuk mengakses fitur ini."}), 403
+
     import receiver_daemon as rd
 
     data = request.get_json(force=True) if request.is_json else {}

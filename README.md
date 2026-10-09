@@ -67,7 +67,8 @@ Sistem secara otomatis mengambil foto resolusi tinggi, membaca kondisi suhu & ke
 │  │ 2. kaper_counter_rpi5.py (AI & Vision Engine)         │  │
 │  │    - YOLOv8 ONNX CPU Accelerator (OpenCV DNN)         │  │
 │  │    - Dual-Channel LAB b* + CLAHE + Watershed Split   │  │
-│  │    - Klasifikasi: Aman (<5), Waspada (5-15), Bahaya   │  │
+│  │    - Klasifikasi: Aman (0-4), Waspada (5-9), Bahaya  │  │
+│  │      (≥10 ngengat/perangkap/hari)                    │  │
 │  │    - Output: Foto beranotasi bounding box hijau       │  │
 │  └───────────────────────────┬───────────────────────────┘  │
 │                              │ Menyimpan hasil deteksi      │
@@ -155,15 +156,20 @@ Folder: `V3_ESP32S3_LoRa_Trap/5_Receiver_RaspberryPi5_Dashboard/pi_service/`
 1. **`app.py`** *(Program Utama & Web Server)*:
    - Aplikasi server Web Dashboard berbasis framework **Flask**.
    - **Otomatis menjalankan `receiver_daemon.py` di thread latar belakang**, sehingga Anda cukup menjalankan file ini untuk mengaktifkan seluruh sistem.
+   - **Sistem Autentikasi Login**: Fitur kontrol (Jepret Manual & Ubah Jadwal) memerlukan login terlebih dahulu. Kredensial default: `petani` / `petani`. Menggunakan Flask session.
    - Menyediakan REST API:
      - `/api/latest?node=NODE_01`: Mengembalikan status sensor dan foto teranotasi terbaru.
      - `/api/nodes`: Mengembalikan daftar seluruh node transmitter yang aktif.
      - `/api/history`: Riwayat tren suhu & kelembaban per tanggal/jam.
      - `/api/detections`: Riwayat tangkapan foto dan kalkulasi jumlah hama.
      - `/export/csv`: Mengunduh berkas log data format CSV Excel.
-     - **API Kontrol Baru**:
-       - `POST /api/command/trigger`: Memicu jepret manual untuk node tertentu.
-       - `POST /api/command/schedule`: Mengubah jadwal foto harian (jam & menit).
+     - **API Autentikasi**:
+       - `POST /api/auth/login`: Login dengan `{"username": "petani", "password": "petani"}`.
+       - `POST /api/auth/logout`: Logout dan hapus sesi.
+       - `GET /api/auth/check`: Memeriksa status login saat ini.
+     - **API Kontrol (Memerlukan Login)**:
+       - `POST /api/command/trigger`: Memicu jepret manual untuk node tertentu. **Wajib login.**
+       - `POST /api/command/schedule`: Mengubah jadwal foto harian (jam & menit). **Wajib login.**
        - `GET /api/command/status`: Memeriksa antrean perintah dan jadwal aktif.
 
 2. **`receiver_daemon.py`** *(Background Serial Worker & Downlink Injector)*:
@@ -191,7 +197,14 @@ Folder: `V3_ESP32S3_LoRa_Trap/5_Receiver_RaspberryPi5_Dashboard/pi_service/`
    - Skrip bash untuk mendaftarkan layanan `insect_trap.service` ke `systemd` Linux agar dashboard menyala otomatis saat Raspberry Pi dihidupkan.
 
 7. **`templates/index.html`**:
-   - Antarmuka web modern responsif dengan fitur dark-mode, widget kartu metrik, komparator foto asli vs deteksi AI, grafik interaktif Chart.js, kartu **Kontrol Dua Arah & Penjadwalan Jarak Jauh** (tombol jepret, dropdown jam/menit, riwayat antrean, toast feedback), dan tombol unduh laporan.
+   - Antarmuka web modern responsif **"Dashboard Pemantauan Trap Hama Kaper"** dengan fitur:
+     - **Mode Siang/Malam (*Light/Dark Mode*)**: Toggle di navbar, preferensi tersimpan di localStorage.
+     - **Autentikasi Login**: Fitur kontrol (Jepret Manual & Ubah Jadwal) terkunci dan memerlukan login (`petani` / `petani`). Panel kontrol ditampilkan dengan overlay terkunci saat belum login.
+     - **Logo Profesional**: SVG logo perisai dengan siluet serangga dan gradien emerald.
+     - **Branding Institusi**: Menampilkan nama "Lab Riset Elektronika dan Instrumentasi - Universitas Gadjah Mada • 2026".
+     - **Ambang Batas Hama Terbaru**: 🟢 Aman (0-4), 🟡 Waspada (5-9), 🔴 Bahaya (≥10 ngengat/perangkap/hari).
+     - Widget kartu metrik KPI, komparator foto asli vs deteksi AI, grafik interaktif Chart.js, kartu Kontrol Dua Arah & Penjadwalan Jarak Jauh, galeri riwayat deteksi, dan footer universitas.
+     - Desain glassmorphism, font Inter, animasi hover halus, dan transisi tema dinamis pada seluruh komponen termasuk grafik Chart.js.
 
 ---
 
@@ -283,8 +296,26 @@ CREATE TABLE IF NOT EXISTS pending_commands (
 
 ### 🌐 Dokumentasi REST API Kontrol Dua Arah
 
+> [!IMPORTANT]
+> Endpoint `POST /api/command/trigger` dan `POST /api/command/schedule` **memerlukan login terlebih dahulu**. Tanpa login, server akan mengembalikan HTTP 403 Forbidden.
+
+#### 0. Login Autentikasi
+- **URL**: `POST /api/auth/login`
+- **Body JSON**:
+  ```json
+  { "username": "petani", "password": "petani" }
+  ```
+- **Respons Sukses** (HTTP 200):
+  ```json
+  { "status": "success", "message": "Login berhasil! Selamat datang, Petani." }
+  ```
+- **Respons Gagal** (HTTP 401):
+  ```json
+  { "status": "error", "message": "Username atau password salah." }
+  ```
+
 #### 1. Memicu Jepret Manual
-- **URL**: `POST /api/command/trigger`
+- **URL**: `POST /api/command/trigger` *(Wajib login)*
 - **Body JSON**:
   ```json
   { "node_id": "NODE_01" }
@@ -402,10 +433,10 @@ Engine `kaper_counter_rpi5.py` dirancang khusus untuk memecahkan kendala optik s
 3. **Serangga Berdempetan (*Cluster*):** Algoritma **Watershed Segmentation** memisahkan kontur yang saling bertumpuk menjadi individu serangga terpisah.
 4. **Deep Learning YOLOv8 ONNX:** Mendeteksi pola bentuk kaper secara holistik dan mengeliminasi kesalahan deteksi akibat kotoran, debu, atau serat daun.
 
-### Ambang Batas Ancaman Hama:
-- 🟢 **Aman**: Populasi →< 5→ ekor kaper (Kondisi lahan normal).
-- 🟡 **Waspada**: Populasi →5 - 15→ ekor kaper (Perlu pemantauan intensif).
-- 🔴 **Bahaya**: Populasi →> 15→ ekor kaper (Ambang batas ekonomi terlampaui, perlu tindakan pengendalian).
+### Ambang Batas Ancaman Hama (ngengat/perangkap/hari):
+- 🟢 **Aman**: Populasi →0 – 4→ ekor kaper (Kondisi lahan normal).
+- 🟡 **Waspada**: Populasi →5 – 9→ ekor kaper (Perlu pemantauan intensif).
+- 🔴 **Bahaya**: Populasi →≥ 10→ ekor kaper (Pengendalian harus dilakukan).
 
 ---
 

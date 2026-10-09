@@ -51,7 +51,8 @@ Dokumen ini berisi panduan komprehensif penyiapan (*setup*), pengkabelan hardwar
 ║  │ 2. kaper_counter_rpi5.py (AI & Computer Vision Engine)             │  ║
 ║  │    - Backend 1: YOLOv8 ONNX (Akselerasi CPU OpenCV DNN)            │  ║
 ║  │    - Backend 2: OpenCV Adaptif (CLAHE + LAB b* + Watershed)        │  ║
-║  │    - Klasifikasi Ancaman: Aman (<5) / Waspada (5-15) / Bahaya (>15)│  ║
+║  │    - Klasifikasi Ancaman: Aman (0-4), Waspada (5-9), Bahaya (≥10)  │  ║
+║  │      (Satuan: ngengat/perangkap/hari)                              │  ║
 ║  │    - Menggambar Bounding Box hijau & simpan foto beranotasi        │  ║
 ║  └─────────────────┬──────────────────────────────────────────────────┘  ║
 ║                    │ Menyimpan hasil kalkulasi                           ║
@@ -59,8 +60,9 @@ Dokumen ini berisi panduan komprehensif penyiapan (*setup*), pengkabelan hardwar
 ║  ┌────────────────────────────────────────────────────────────────────┐  ║
 ║  │ 3. app.py (Flask Web Dashboard Server - Port 5000)                 │  ║
 ║  │    - REST API: /api/latest, /api/nodes, /api/history, /export/csv  │  ║
+║  │    - Auth API: /api/auth/login, /api/auth/logout, /api/auth/check  │  ║
 ║  │    - REST API Kontrol: /api/command/trigger, /schedule, /status    │  ║
-║  │    - UI Responsif: Kontrol 2 Arah, Komparator Foto, Grafik Tren    │  ║
+║  │    - UI: Mode Siang/Malam, Proteksi Login, Kontrol 2 Arah, Grafik  │  ║
 ║  └─────────────────┬──────────────────────────────────────────────────┘  ║
 ╚════════════════════╪══════════════════════════════════════════════════════╝
                      │
@@ -83,14 +85,14 @@ Seluruh kode program stasiun penerima berada di dalam folder:
 
 | Nama File | Fungsi Utama | Keterangan Teknis |
 | :--- | :--- | :--- |
-| **`app.py`** | Server Web Dashboard utama (Flask) | Mengaktifkan server web di port `5000`, menyediakan REST API pemantauan & **REST API Kontrol Dua Arah** (`/api/command/trigger`, `/api/command/schedule`, `/api/command/status`), dan **secara otomatis menyalakan thread `receiver_daemon` di latar belakang**. Cukup jalankan file ini untuk mengaktifkan seluruh sistem. |
+| **`app.py`** | Server Web Dashboard utama (Flask) | Mengaktifkan server web di port `5000`, menyediakan REST API pemantauan, **Autentikasi Login** (`/api/auth/login`, kredensial: `petani`/`petani`), **REST API Kontrol Dua Arah** (`/api/command/trigger`, `/api/command/schedule`, `/api/command/status`), dan **secara otomatis menyalakan thread `receiver_daemon` di latar belakang**. Cukup jalankan file ini untuk mengaktifkan seluruh sistem. |
 | **`receiver_daemon.py`** | Service Daemon Penerima Serial & Injektor Downlink | Menghubungkan Raspberry Pi ke ESP32 via `/dev/ttyUSB0` (115200 baud). Bertugas menangkap teks sensor DHT22 & RTC, **menginjeksikan perintah tertunda ke LoRa saat jendela dengar node**, merekonstruksi potongan biner JPEG menjadi file gambar utuh di folder `static/captures/`, lalu memanggil engine `kaper_counter_rpi5.py`. |
-| **`kaper_counter_rpi5.py`** | Engine Deteksi & Penghitung Hama AI | Mengolah foto perangkap lem kuning untuk menghitung populasi kupu kaper (*Spodoptera exigua*). Memiliki **Dual Backend**: otomatis menggunakan model Deep Learning **YOLOv8 ONNX** jika file `kaper_yolo.onnx` tersedia; jika tidak, otomatis beralih ke **OpenCV Adaptif (CLAHE + LAB b-channel + Watershed)**. |
+| **`kaper_counter_rpi5.py`** | Engine Deteksi & Penghitung Hama AI | Mengolah foto perangkap lem kuning untuk menghitung populasi kupu kaper (*Spodoptera exigua*). Memiliki **Dual Backend**: otomatis menggunakan model Deep Learning **YOLOv8 ONNX** jika file `kaper_yolo.onnx` tersedia; jika tidak, otomatis beralih ke **OpenCV Adaptif (CLAHE + LAB b-channel + Watershed)**. Ambang batas ancaman: 🟢 Aman (0-4), 🟡 Waspada (5-9), 🔴 Bahaya (≥10 ngengat/perangkap/hari). |
 | **`kaper_config.json`** | Konfigurasi Parameter Deteksi OpenCV | Menyimpan ambang batas deteksi (*threshold offset*, ukuran area kontur minimal/maksimal, rasio aspek, clip limit CLAHE). Nilai ini dapat disesuaikan tanpa perlu mengubah kode Python. |
 | **`simulate_feed.py`** | Skrip Pengujian / Injeksi Foto Instan | Digunakan untuk menguji Web Dashboard secara langsung di laboratorium tanpa perlu menyalakan pemancar LoRa di lapangan. Menjalankan deteksi pada foto sampel dan langsung memasukkan hasilnya ke database SQLite. |
 | **`requirements.txt`** | Daftar Dependensi Python | Berisi pustaka minimal teroptimasi: `pyserial>=3.5`, `opencv-python-headless>=4.8.0`, `numpy>=1.24.0`, dan `flask>=3.0.0`. |
 | **`setup_autostart.sh`** | Skrip Otomatisasi Booting Linux | Mendaftarkan `app.py` ke daemon `systemd` (`insect_trap.service`) agar server web dan penerima LoRa langsung otomatis menyala saat Raspberry Pi dinyalakan (*plug and play*). |
-| **`templates/index.html`** | Tampilan Antarmuka Web Dashboard | Desain antarmuka modern gelap (*dark mode*) berbasis Tailwind CSS dan Chart.js. Dilengkapi kartu **Kontrol Dua Arah & Penjadwalan Jarak Jauh** (tombol jepret manual, form ubah jam jadwal, riwayat perintah, notifikasi toast). |
+| **`templates/index.html`** | Tampilan Antarmuka Web Dashboard | **Dashboard Pemantauan Trap Hama Kaper (Lab Riset Elektronika dan Instrumentasi - UGM 2026)**. Dilengkapi fitur Mode Siang/Malam (*Light & Dark Mode*), proteksi login modal untuk panel kontrol jepret & jadwal harian, logo profesional perisai berikon serangga, kartu metrik KPI, grafik tren populasi & sensor, serta galeri deteksi. |
 | **`trap_monitoring.db`** | Database SQLite Utama | Menyimpan 3 tabel utama: `sensor_logs` (riwayat suhu & RH), `image_logs` (nama file foto, jumlah serangga, ancaman), dan **`pending_commands`** (antrean perintah kontrol downlink). |
 | **`sensor_history.csv`** | Cadangan Log Sensor Format Excel | File teks CSV berisi data log lingkungan yang dapat langsung diunduh dari dashboard untuk analisis data di Microsoft Excel / SPSS. |
 | **`kaper_yolo.onnx`** | Model AI YOLOv8-Nano Terlatih | File bobot neural network hasil training di Google Colab dalam format Open Neural Network Exchange (ONNX), dirancang agar sangat ringan dan cepat di CPU ARM Raspberry Pi 5. |
@@ -214,6 +216,11 @@ Akses dashboard dari browser smartphone/laptop di mana saja:
 Engine `kaper_counter_rpi5.py` secara otomatis menggunakan arsitektur terbaik:
 - **Prioritas 1 (Deep Learning)**: Memuat `kaper_yolo.onnx` via OpenCV DNN CPU Accelerator.
 - **Prioritas 2 (Computer Vision Adaptif)**: LAB b* channel + CLAHE + Watershed jika file ONNX tidak tersedia.
+
+### Ambang Batas Populasi Hama (ngengat/perangkap/hari):
+- 🟢 **Aman**: 0 – 4 ekor kaper (Kondisi lahan normal)
+- 🟡 **Waspada**: 5 – 9 ekor kaper (Perlu pemantauan intensif)
+- 🔴 **Bahaya**: &ge; 10 ekor kaper (Pengendalian harus segera dilakukan)
 
 ---
 
