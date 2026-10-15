@@ -25,3 +25,11 @@ V3_ESP32S3_LoRa_Trap/5_Receiver_RaspberryPi5_Dashboard/pi_service/static/annotat
 Thumbs.db
 .vscode/
 .idea/
+
+# Dokumen Pribadi & CV (Mencegah ter-push ke public repo)
+*CV*
+*cv*
+*.docx
+*.pdf
+convert_to_pdf.ps1
+generate_cv_docx.py
