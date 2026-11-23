@@ -26,10 +26,13 @@ Thumbs.db
 .vscode/
 .idea/
 
-# Dokumen Pribadi & CV (Mencegah ter-push ke public repo)
+# Dokumen Pribadi, CV & Paten (Mencegah ter-push ke public repo)
 *CV*
 *cv*
 *.docx
 *.pdf
-convert_to_pdf.ps1
-generate_cv_docx.py
+convert*.ps1
+generate*.py
+build*.py
+*draft*.txt
+Gambar_*.png
